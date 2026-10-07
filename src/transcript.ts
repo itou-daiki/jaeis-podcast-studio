@@ -10,7 +10,7 @@ export function validateCues(input: unknown): Cue[] {
   if (!Array.isArray(input) || input.length > 50000)
     throw new Error("字幕の形式または件数を確認してください。");
   return input
-    .map((c: Record<string, unknown>) => {
+    .map((c: Record<string, unknown>): Cue => {
       if (
         !c ||
         !Number.isFinite(c.start) ||
@@ -20,12 +20,39 @@ export function validateCues(input: unknown): Cue[] {
         typeof c.text !== "string"
       )
         throw new Error("字幕の時刻・本文が正しくありません。");
+      const hint = c.speakerHint as Record<string, unknown> | undefined;
+      if (
+        (c.speakerManual !== undefined &&
+          typeof c.speakerManual !== "boolean") ||
+        (hint !== undefined &&
+          (!hint ||
+            typeof hint.name !== "string" ||
+            typeof hint.excerpt !== "string")) ||
+        (c.speakerReview !== undefined &&
+          (typeof c.speakerReview !== "string" ||
+            !["short", "unmatched", "ambiguous"].includes(c.speakerReview)))
+      )
+        throw new Error("話者の確認情報が正しくありません。");
       return {
         start: Number(c.start),
         end: Number(c.end),
         text: c.text.slice(0, 10000),
         ...(typeof c.speaker === "string"
           ? { speaker: c.speaker.slice(0, 100) }
+          : {}),
+        ...(typeof c.speakerManual === "boolean"
+          ? { speakerManual: c.speakerManual }
+          : {}),
+        ...(hint
+          ? {
+              speakerHint: {
+                name: (hint.name as string).slice(0, 100),
+                excerpt: (hint.excerpt as string).slice(0, 350),
+              },
+            }
+          : {}),
+        ...(c.speakerReview
+          ? { speakerReview: c.speakerReview as Cue["speakerReview"] }
           : {}),
       };
     })
@@ -35,7 +62,26 @@ export function parseTranscript(source: string): Cue[] {
   const text = source.replace(/^\uFEFF/, "").trim();
   if (text.startsWith("{") || text.startsWith("[")) {
     const data = JSON.parse(text);
-    return validateCues(Array.isArray(data) ? data : data.segments);
+    if (Array.isArray(data?.chunks)) {
+      if (data.chunks.length > 50000)
+        throw new Error("字幕の件数が多すぎます。");
+      return validateCues(
+        data.chunks.map((c: { timestamp?: unknown[]; text?: unknown }) => {
+          if (
+            !Array.isArray(c?.timestamp) ||
+            c.timestamp.length !== 2 ||
+            !c.timestamp.every(
+              (t) => typeof t === "number" && Number.isFinite(t),
+            )
+          )
+            throw new Error(
+              "Whisper JSONの開始・終了時刻が不足しています。時刻付きのsegmentsまたはSRTで出力してください。",
+            );
+          return { start: c.timestamp[0], end: c.timestamp[1], text: c.text };
+        }),
+      );
+    }
+    return validateCues(Array.isArray(data) ? data : data?.segments);
   }
   const cues: Cue[] = [];
   const stamp = /(\d{1,2}:)?\d{2}:\d{2}[.,]\d{1,3}/g;

@@ -1101,6 +1101,109 @@ textarea {
   align-items: start;
   margin-top: 12px;
 }
+.script-panel {
+  border-block: 1px solid var(--line);
+  margin: 16px 0;
+  padding: 13px 0;
+}
+.transcript-tools > summary {
+  font-size: 12px;
+  color: var(--blue);
+  cursor: pointer;
+  padding: 8px 0;
+}
+.transcript-tools[open] > summary {
+  margin-bottom: 8px;
+}
+.script-panel > summary {
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.script-panel > summary span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  margin-left: 8px;
+}
+.script-label {
+  display: block;
+  font-size: 12px;
+  margin-top: 12px;
+}
+.script-label textarea {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px;
+  font-size: 12px;
+  line-height: 1.8;
+  resize: vertical;
+}
+.script-names,
+.script-filename,
+.script-preview,
+.speaker-suggestion {
+  overflow-wrap: anywhere;
+}
+.script-names,
+.script-preview,
+.script-preview h3 {
+  font-size: 12px;
+  line-height: 1.8;
+}
+.script-preview {
+  margin: 12px 0;
+}
+.script-preview[open] {
+  max-height: 350px;
+  overflow: auto;
+  padding: 8px;
+  background: #f3f5f9;
+}
+.script-preview pre {
+  white-space: pre-wrap;
+  font: inherit;
+}
+.speaker-count {
+  margin: 8px 0;
+}
+.cue-speaker {
+  margin-top: 8px;
+  font-size: 12px;
+}
+.cue-speaker label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cue-speaker input {
+  flex: 1;
+  width: 0;
+  min-width: 0;
+  padding: 6px;
+  font-size: 12px;
+}
+.speaker-suggestion {
+  margin-top: 8px;
+  padding-left: 8px;
+  border-left: 2px solid var(--blue);
+}
+.speaker-suggestion > div {
+  display: flex;
+  align-items: center;
+  gap: 4px 12px;
+  flex-wrap: wrap;
+}
+.speaker-suggestion summary {
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 2;
+}
+.speaker-suggestion p {
+  margin: 4px 0;
+  line-height: 1.8;
+}
 .music-card {
   border-top: 1px solid var(--line);
   padding: 18px 0 8px;

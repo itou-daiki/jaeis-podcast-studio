@@ -1,1 +1,76 @@
-<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>第三者ソフトウェア — JAEIS Podcast Studio</title><body style="font:16px/1.8 system-ui;max-width:850px;margin:40px auto;padding:20px"><h1>第三者ソフトウェア</h1><p>本アプリは以下のオープンソースソフトウェアを使用しています。各著作権・ライセンスはそれぞれの権利者に帰属します。</p><ul><li>React / React DOM / Scheduler: MIT — <a href="react.txt">React</a> / <a href="react-dom.txt">React DOM</a> / <a href="scheduler.txt">Scheduler</a></li><li>Lucide: ISC — <a href="lucide-react.txt">ライセンス</a></li><li>Transformers.js 4.3.1: Apache-2.0 — <a href="huggingface-transformers.txt">ライセンス</a> / <a href="https://github.com/huggingface/transformers.js">ソース</a></li><li>ONNX Runtime: MIT — <a href="ONNX-Runtime-MIT.txt">ライセンス</a> / <a href="https://github.com/microsoft/onnxruntime">ソース</a></li><li>@ffmpeg/ffmpeg 0.12.15: MIT — <a href="FFmpeg-wasm-MIT.txt">ライセンス</a></li><li>@ffmpeg/core 0.12.10: GPL-2.0-or-later — <a href="GPL-2.0.txt">GPL v2</a> / <a href="https://github.com/ffmpegwasm/ffmpeg.wasm/tree/71aa99d37c02a7b4c435275ca9ef50e612f6efa1">リリースに対応するソースとビルド手順</a> / <a href="https://github.com/ffmpegwasm/ffmpeg.wasm/archive/71aa99d37c02a7b4c435275ca9ef50e612f6efa1.tar.gz">ソースアーカイブ</a>。配布するcoreは変更していません。FFmpeg n5.1.4と各依存ライブラリの取得元・バージョンは同ソースのDockerfileに記載されています。<a href="https://github.com/FFmpeg/FFmpeg/tree/n5.1.4">FFmpegソース</a></li><li>Whisperモデル: <a href="https://huggingface.co/onnx-community/whisper-tiny">Tiny</a> / <a href="https://huggingface.co/onnx-community/whisper-base">Base</a> / <a href="https://huggingface.co/onnx-community/whisper-small">Small</a>。モデルはアプリに同梱せず、ユーザー操作時に提供元から取得します。</li></ul><p>このページは第三者ソフトウェアについての表示です。</p><a href="../">編集画面に戻る</a></body></html>
+<!doctype html>
+<html lang="ja">
+  <meta charset="utf-8" /><meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  /><title>第三者ソフトウェア — JAEIS Podcast Studio</title>
+  <body
+    style="
+      font: 16px/1.8 system-ui;
+      max-width: 850px;
+      margin: 40px auto;
+      padding: 20px;
+    "
+  >
+    <h1>第三者ソフトウェア</h1>
+    <p>
+      本アプリは以下のオープンソースソフトウェアを使用しています。各著作権・ライセンスはそれぞれの権利者に帰属します。
+    </p>
+    <ul>
+      <li>
+        React / React DOM / Scheduler: MIT — <a href="react.txt">React</a> /
+        <a href="react-dom.txt">React DOM</a> /
+        <a href="scheduler.txt">Scheduler</a>
+      </li>
+      <li>Lucide: ISC — <a href="lucide-react.txt">ライセンス</a></li>
+      <li>
+        Mammoth 1.13.0: BSD-2-Clause —
+        <a href="word-notices.txt"
+          >Word本文抽出と依存ライブラリの著作権・ライセンス</a
+        >
+        /
+        <a href="https://github.com/mwilliamson/mammoth.js">ソース</a
+        >。JSZipはMITライセンスで使用しています。
+      </li>
+      <li>
+        Transformers.js 4.3.1: Apache-2.0 —
+        <a href="huggingface-transformers.txt">ライセンス</a> /
+        <a href="https://github.com/huggingface/transformers.js">ソース</a>
+      </li>
+      <li>
+        ONNX Runtime: MIT — <a href="ONNX-Runtime-MIT.txt">ライセンス</a> /
+        <a href="https://github.com/microsoft/onnxruntime">ソース</a>
+      </li>
+      <li>
+        @ffmpeg/ffmpeg 0.12.15: MIT —
+        <a href="FFmpeg-wasm-MIT.txt">ライセンス</a>
+      </li>
+      <li>
+        @ffmpeg/core 0.12.10: GPL-2.0-or-later —
+        <a href="GPL-2.0.txt">GPL v2</a> /
+        <a
+          href="https://github.com/ffmpegwasm/ffmpeg.wasm/tree/71aa99d37c02a7b4c435275ca9ef50e612f6efa1"
+          >リリースに対応するソースとビルド手順</a
+        >
+        /
+        <a
+          href="https://github.com/ffmpegwasm/ffmpeg.wasm/archive/71aa99d37c02a7b4c435275ca9ef50e612f6efa1.tar.gz"
+          >ソースアーカイブ</a
+        >。配布するcoreは変更していません。FFmpeg
+        n5.1.4と各依存ライブラリの取得元・バージョンは同ソースのDockerfileに記載されています。<a
+          href="https://github.com/FFmpeg/FFmpeg/tree/n5.1.4"
+          >FFmpegソース</a
+        >
+      </li>
+      <li>
+        Whisperモデル:
+        <a href="https://huggingface.co/onnx-community/whisper-tiny">Tiny</a> /
+        <a href="https://huggingface.co/onnx-community/whisper-base">Base</a> /
+        <a href="https://huggingface.co/onnx-community/whisper-small">Small</a
+        >。モデルはアプリに同梱せず、ユーザー操作時に提供元から取得します。
+      </li>
+    </ul>
+    <p>このページは第三者ソフトウェアについての表示です。</p>
+    <a href="../">編集画面に戻る</a>
+  </body>
+</html>

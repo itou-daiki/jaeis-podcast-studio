@@ -14,7 +14,14 @@ export type Track = {
   muted: boolean;
   color: string;
 };
-export type Cue = Range & { text: string; speaker?: string };
+export type Cue = Range & {
+  text: string;
+  // Only imported or manually confirmed names belong in exported subtitles.
+  speaker?: string;
+  speakerManual?: boolean;
+  speakerHint?: { name: string; excerpt: string };
+  speakerReview?: "short" | "unmatched" | "ambiguous";
+};
 export type Candidate = Cut & {
   kind: "silence" | "retake" | "repeat";
   detail: string;

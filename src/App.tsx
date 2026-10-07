@@ -56,7 +56,11 @@ import {
   readProject,
   saveProject,
   type Project,
+  type SavedScript,
 } from "./project";
+import { clearSpeakerHint, parseScript } from "./speakers";
+import { scriptJob } from "./script-jobs";
+import { CueSpeaker, ScriptPanel } from "./ScriptPanel";
 import { Waveform } from "./Waveform";
 import { DeliveryPanel, NextStep, WorkflowNav, type Step } from "./Workflow";
 
@@ -111,6 +115,20 @@ export default function App() {
   const [query, setQuery] = useState(""),
     [model, setModel] = useState("onnx-community/whisper-base");
   const [cuePage, setCuePage] = useState(0);
+  const [script, setScript] = useState<SavedScript>();
+  const parsedScript = useMemo(
+    () => parseScript(script?.text ?? ""),
+    [script?.text],
+  );
+  const speakerNames = useMemo(
+    () => [
+      ...new Set([
+        ...parsedScript.speakers,
+        ...cues.flatMap((c) => (c.speaker ? [c.speaker] : [])),
+      ]),
+    ],
+    [parsedScript, cues],
+  );
   const [threshold, setThreshold] = useState(-45),
     [pauseLength, setPauseLength] = useState(2);
   const [format, setFormat] = useState<"wav" | "mp3">("mp3"),
@@ -147,7 +165,11 @@ export default function App() {
   );
   const shownCues = cues
     .map((cue, index) => ({ cue, index }))
-    .filter(({ cue }) => `${cue.speaker ?? ""} ${cue.text}`.includes(query));
+    .filter(({ cue }) =>
+      `${cue.speaker ?? cue.speakerHint?.name ?? ""} ${cue.text}`.includes(
+        query,
+      ),
+    );
   const currentCuePage = Math.min(
     cuePage,
     Math.max(0, Math.ceil(shownCues.length / 100) - 1),
@@ -158,6 +180,7 @@ export default function App() {
       title,
       cuts,
       cues,
+      ...(script ? { script } : {}),
       tracks: tracks.map(
         ({ name, size, lastModified, gainDb, offset, muted }) => ({
           name,
@@ -176,7 +199,7 @@ export default function App() {
         gainDb,
       })),
     }),
-    [title, cuts, cues, tracks, music],
+    [title, cuts, cues, tracks, music, script],
   );
   const audioSignature = useMemo(
     () => JSON.stringify([project.cuts, project.tracks, project.music]),
@@ -555,7 +578,7 @@ export default function App() {
           finish();
           reject(new Error(`文字起こしを開始できませんでした: ${e.message}`));
         };
-        worker.onmessage = (event) => {
+        worker.onmessage = async (event) => {
           const data = event.data;
           if (data.type === "progress") setBusy(data.message);
           if (data.type === "error") {
@@ -567,13 +590,13 @@ export default function App() {
             );
           }
           if (data.type === "complete") {
-            setCues(data.cues);
-            setTab("transcript");
-            setNotice(
-              "文字起こしが完了しました。人名・専門用語・無音部分の誤認識を確認してください。",
-            );
             finish();
-            resolve();
+            try {
+              await receiveCues(data.cues);
+              resolve();
+            } catch (error) {
+              reject(error);
+            }
           }
         };
         worker.postMessage({ audio, model, offset: range.start }, [
@@ -581,6 +604,46 @@ export default function App() {
         ]);
       });
     });
+  }
+
+  function updateCue(index: number, cue: Cue) {
+    setCues((prev) => prev.map((c, i) => (i === index ? cue : c)));
+    setCandidates([]);
+    setDismissed([]);
+  }
+  function changeScript(next: SavedScript | undefined) {
+    setScript(next);
+    setCues((prev) => prev.map(clearSpeakerHint));
+  }
+  async function matchSpeakers(source: Cue[]) {
+    setBusy("原稿から話者候補を探しています…");
+    return scriptJob({ type: "match", text: script?.text ?? "", cues: source });
+  }
+  async function receiveCues(source: Cue[]) {
+    // Keep ASR output even if optional script matching fails or times out.
+    setCues(source);
+    setCandidates([]);
+    setDismissed([]);
+    setTab("transcript");
+    setCuePage(0);
+    setQuery("");
+    if (parsedScript.turns.length) {
+      let matched: Cue[];
+      try {
+        matched = await matchSpeakers(source);
+      } catch (error) {
+        throw new Error(
+          `文字起こしは保存しましたが、話者の照合に失敗しました。${message(error)}`,
+        );
+      }
+      setCues(matched);
+      setNotice(
+        `文字起こしを読み込み、${matched.filter((c) => c.speakerHint).length}区間に話者候補を付けました。再生して確認してください。`,
+      );
+    } else
+      setNotice(
+        "文字起こしを読み込みました。人名・専門用語・無音部分の誤認識を確認してください。",
+      );
   }
 
   function save() {
@@ -615,6 +678,7 @@ export default function App() {
     setTracks([]);
     setMusic([]);
     setCues([]);
+    setScript(undefined);
     setHistory([[]]);
     setHistoryIndex(0);
     setCandidates([]);
@@ -686,6 +750,7 @@ export default function App() {
       setTracks(restored);
       setMusic(restoredMusic);
       setCues(project.cues);
+      setScript(project.script);
       setTitle(project.title);
       setHistory([project.cuts]);
       setHistoryIndex(0);
@@ -770,7 +835,7 @@ export default function App() {
             rel="noreferrer"
             className="version"
           >
-            v0.2
+            v0.3
           </a>
         </div>
       </header>
@@ -1522,59 +1587,112 @@ export default function App() {
                       <h2>文字起こし</h2>
                       <span>{cues.length}区間</span>
                     </div>
-                    <div className="asr-box">
-                      <label>
-                        日本語モデル
-                        <select
-                          aria-label="文字起こしモデル"
-                          value={model}
-                          onChange={(e) => setModel(e.target.value)}
+                    <details
+                      className="transcript-tools"
+                      open={cues.length === 0}
+                    >
+                      <summary>文字起こし・字幕を読み込む</summary>
+                      <div className="asr-box">
+                        <label>
+                          日本語モデル
+                          <select
+                            aria-label="文字起こしモデル"
+                            value={model}
+                            onChange={(e) => setModel(e.target.value)}
+                          >
+                            <option value="onnx-community/whisper-tiny">
+                              Whisper Tiny · 約41 MB
+                            </option>
+                            <option value="onnx-community/whisper-base">
+                              Whisper Base · 約77 MB
+                            </option>
+                            <option value="onnx-community/whisper-small">
+                              Whisper Small · 約249 MB
+                            </option>
+                          </select>
+                        </label>
+                        <p className="hint">
+                          初回はモデルを外部から取得します（数十〜数百MB）。音声は送信しません。PCの性能により収録時間以上かかる場合があります。
+                        </p>
+                        <button
+                          className="primary full"
+                          onClick={() => void transcribe()}
+                          disabled={
+                            !tracks.some((t) => !t.muted) || duration <= 0
+                          }
                         >
-                          <option value="onnx-community/whisper-tiny">
-                            Whisper Tiny · 約41 MB
-                          </option>
-                          <option value="onnx-community/whisper-base">
-                            Whisper Base · 約77 MB
-                          </option>
-                          <option value="onnx-community/whisper-small">
-                            Whisper Small · 約249 MB
-                          </option>
-                        </select>
-                      </label>
-                      <p className="hint">
-                        初回はモデルを外部から取得します（数十〜数百MB）。音声は送信しません。PCの性能により収録時間以上かかる場合があります。
-                      </p>
+                          <WandSparkles size={15} />
+                          {selection.end > selection.start
+                            ? "選択範囲を文字起こし"
+                            : "日本語を文字起こし"}
+                        </button>
+                        <p className="hint compact">
+                          まず短い範囲でお試しください。選択範囲の処理も既存の字幕を置き換えます。
+                        </p>
+                      </div>
                       <button
-                        className="primary full"
-                        onClick={() => void transcribe()}
-                        disabled={
-                          !tracks.some((t) => !t.muted) || duration <= 0
-                        }
+                        className="secondary full"
+                        onClick={() => subtitleInput.current?.click()}
                       >
-                        <WandSparkles size={15} />
-                        {selection.end > selection.start
-                          ? "選択範囲を文字起こし"
-                          : "日本語を文字起こし"}
+                        <Upload size={15} />
+                        Zoom字幕などを読み込む
                       </button>
                       <p className="hint compact">
-                        まず短い範囲でお試しください。選択範囲の処理も既存の字幕を置き換えます。
+                        VTT / SRT / Whisper JSON · 元音声と同じ時刻のもの
                       </p>
-                    </div>
-                    <button
-                      className="secondary full"
-                      onClick={() => subtitleInput.current?.click()}
-                    >
-                      <Upload size={15} />
-                      Zoom字幕などを読み込む
-                    </button>
-                    <p className="hint compact">
-                      VTT / SRT / Whisper JSON · 元音声と同じ時刻のもの
-                    </p>
+                    </details>
+                    <ScriptPanel
+                      script={script}
+                      parsed={parsedScript}
+                      hasCues={!!cues.length}
+                      onChange={changeScript}
+                      onImport={(file) =>
+                        void run(async () => {
+                          if (file.size > 10_000_000)
+                            throw new Error("原稿ファイルは10 MBまでです。");
+                          setBusy("原稿の本文を読み込んでいます…");
+                          const text = await scriptJob({
+                            type: "file",
+                            name: file.name,
+                            bytes: await file.arrayBuffer(),
+                          });
+                          changeScript({ text, name: file.name.slice(0, 200) });
+                          setNotice(
+                            "原稿を読み込みました。読み取った話者と注釈を確認してから、話者候補を探してください。",
+                          );
+                        })
+                      }
+                      onMatch={() =>
+                        void run(async () => {
+                          const matched = await matchSpeakers(cues);
+                          setCues(matched);
+                          setNotice(
+                            `${matched.filter((c) => c.speakerHint).length}区間に話者候補を付けました。音声を聞いて確定・修正してください。`,
+                          );
+                        })
+                      }
+                    />
+                    {cues.length ? (
+                      <p className="hint speaker-count">
+                        名前あり {cues.filter((c) => c.speaker).length} · 候補{" "}
+                        {cues.filter((c) => c.speakerHint && !c.speaker).length}{" "}
+                        · 未設定{" "}
+                        {
+                          cues.filter((c) => !c.speaker && !c.speakerHint)
+                            .length
+                        }
+                      </p>
+                    ) : null}
+                    <datalist id="speaker-names">
+                      {speakerNames.map((name) => (
+                        <option key={name} value={name} />
+                      ))}
+                    </datalist>
                     <label className="search-box">
                       <Search size={15} />
                       <input
                         aria-label="文字起こしを検索"
-                        placeholder="発言を検索…"
+                        placeholder="発言・話者名を検索…"
                         value={query}
                         onChange={(e) => {
                           setQuery(e.target.value);
@@ -1598,18 +1716,19 @@ export default function App() {
                               <Play size={11} />
                               {formatTime(cue.start)}
                             </button>
-                            {cue.speaker ? <small>{cue.speaker}</small> : null}
+                            <CueSpeaker
+                              cue={cue}
+                              label={formatTime(cue.start)}
+                              onChange={(next) => updateCue(index, next)}
+                            />
                             <textarea
                               aria-label={`${formatTime(cue.start)} の発言`}
                               value={cue.text}
                               onChange={(e) =>
-                                setCues((prev) =>
-                                  prev.map((c, i) =>
-                                    i === index
-                                      ? { ...c, text: e.target.value }
-                                      : c,
-                                  ),
-                                )
+                                updateCue(index, {
+                                  ...clearSpeakerHint(cue),
+                                  text: e.target.value,
+                                })
                               }
                             />
                           </div>
@@ -1671,7 +1790,7 @@ export default function App() {
                       </div>
                     ) : null}
                     <p className="hint">
-                      誤認識を修正してから候補を探してください。話者の自動識別は行いません。
+                      時刻を押すと元の発言を再生します。話者候補は推定です。短い相づち・大きな言い換え・原稿にない発言は、聞いて名前を入力してください。字幕に名前が入るのは、入力・確定したものと元字幕の名前だけです。
                     </p>
                   </div>
                 ) : null}
@@ -1879,8 +1998,14 @@ export default function App() {
                   throw new Error(
                     "字幕の時刻が収録時間を超えています。対応する収録を確認してください。",
                   );
-                setCues(parsed);
-                setNotice("字幕を読み込みました。");
+                if (
+                  cues.length &&
+                  !window.confirm(
+                    "現在の文字起こしと話者の確認結果を置き換えます。必要なら先に編集を保存してください。",
+                  )
+                )
+                  return;
+                await receiveCues(parsed);
               });
             e.target.value = "";
           }}
@@ -1999,7 +2124,7 @@ export default function App() {
                 波形をドラッグして選択。拡大してつなぎ目を確認し、開始・終了の秒数を微調整できます。
               </li>
               <li>
-                「不要な部分をカット」の「文字起こし」で、文字起こしまたはZoomのVTTを読み込みます。「カット候補」で不要部分を探します。
+                「不要な部分をカット」の「文字起こし」で、Whisperで文字起こしするか、字幕を読み込みます。Wordやテキストの原稿があれば、話者候補を探せます。原稿は任意です。
               </li>
               <li>
                 候補は必ず試聴して採用。誤認識や似た表現だけで会話を自動削除しません。
@@ -2010,17 +2135,17 @@ export default function App() {
             </ol>
             <h3>保存とプライバシー</h3>
             <p>
-              音声・字幕はこの端末で処理します。モデル取得時のみHugging
+              音声・字幕・原稿はこの端末で処理します。モデル取得時のみHugging
               Face等へ接続します。アプリへのアクセスはGitHub
               Pagesに記録され得ます。モデルはブラウザにキャッシュされる場合があります。
             </p>
             <p>
-              編集内容と字幕はこのブラウザに自動保存します（音声本体・操作デモは含みません）。再開時は画面の案内に沿って同じ元音声を選び直してください。共有PCでは他の利用者も編集内容を参照できる場合があります。ブラウザの保存データを削除すると復元できないため、「編集を保存」でファイルにも保管してください。
+              編集内容・字幕・原稿・話者の確認結果はこのブラウザに自動保存します（音声本体・操作デモは含みません）。再開時は同じ元音声を選び直してください。共有PCでは他の利用者も内容を参照できる場合があります。「編集を保存」でファイルにも保管してください。
             </p>
             <h3>現在の制限</h3>
             <p>
               PCのChrome /
-              Edgeを推奨。長時間・多トラックはメモリを多く使います。話者の自動識別、音楽の重ね合わせ、自動要約は未対応です。SmallはBaseより重く、精度が必ず上がるとは限りません。専門用語や人名は確認してください。
+              Edgeを推奨。長時間・多トラックはメモリを多く使います。声による話者識別、音楽の重ね合わせ、自動要約は未対応です。原稿との照合は似た言葉を手がかりにした候補で、大きな言い換えや原稿にない発言は推定できません。SmallはBaseより重く、精度が必ず上がるとは限りません。専門用語や人名は確認してください。
             </p>
             <p>
               <a

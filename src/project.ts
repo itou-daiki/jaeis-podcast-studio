@@ -1,5 +1,8 @@
 import type { Cut, Cue } from "./types";
 import { validateCues } from "./transcript";
+import { MAX_SCRIPT_LENGTH } from "./speakers";
+
+export type SavedScript = { text: string; name?: string };
 
 type SavedTrack = {
   name: string;
@@ -23,6 +26,7 @@ export type Project = {
   cues: Cue[];
   tracks: SavedTrack[];
   music: SavedMusic[];
+  script?: SavedScript;
 };
 export const saveProject = (project: Project) =>
   JSON.stringify(project, null, 2);
@@ -108,6 +112,14 @@ export function readProject(text: string): Project {
       !finite(m.gainDb, -60, 12)
     )
       throw new Error("音楽の設定が正しくありません。");
+  if (
+    p.script !== undefined &&
+    (!p.script ||
+      typeof p.script.text !== "string" ||
+      p.script.text.length > MAX_SCRIPT_LENGTH ||
+      (p.script.name !== undefined && typeof p.script.name !== "string"))
+  )
+    throw new Error("原稿の形式を確認してください（10万文字まで）。");
   return {
     version: 1,
     title: p.title.slice(0, 200),
@@ -120,5 +132,15 @@ export function readProject(text: string): Project {
     tracks: p.tracks,
     music: p.music,
     cues: validateCues(p.cues),
+    ...(p.script
+      ? {
+          script: {
+            text: p.script.text,
+            ...(p.script.name !== undefined
+              ? { name: p.script.name.slice(0, 200) }
+              : {}),
+          },
+        }
+      : {}),
   };
 }

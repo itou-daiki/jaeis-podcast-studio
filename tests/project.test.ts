@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
 import { missingSources, readProject, saveProject } from "../src/project";
+import fc from "fast-check";
 
 test("resume identifies missing sources, including repeated uses of the same jingle", () => {
   const project = readProject(
@@ -42,6 +43,69 @@ test("resume identifies missing sources, including repeated uses of the same jin
     voices: [],
     music: [],
   });
+});
+
+test("script and confirmed / unconfirmed speaker states roundtrip independently", () => {
+  fc.assert(
+    fc.property(
+      fc.string({ maxLength: 1000 }),
+      fc.string({ minLength: 1, maxLength: 100 }),
+      (text, name) => {
+        const data = {
+          version: 1 as const,
+          title: "話者の確認",
+          tracks: [],
+          music: [],
+          cuts: [],
+          script: { text, name: "原稿.docx" },
+          cues: [
+            { start: 0, end: 1, text, speaker: name, speakerManual: true },
+            { start: 1, end: 2, text, speakerManual: true },
+            {
+              start: 2,
+              end: 3,
+              text,
+              speakerHint: { name, excerpt: text.slice(0, 350) },
+            },
+            { start: 3, end: 4, text, speakerReview: "ambiguous" as const },
+          ],
+        };
+        expect(readProject(saveProject(data))).toEqual(data);
+      },
+    ),
+    { numRuns: 150 },
+  );
+  const empty = {
+    version: 1,
+    title: "",
+    tracks: [],
+    music: [],
+    cuts: [],
+    cues: [],
+  };
+  expect(() =>
+    readProject(JSON.stringify({ ...empty, script: { text: 42 } })),
+  ).toThrow();
+  expect(() =>
+    readProject(
+      JSON.stringify({ ...empty, script: { text: "x".repeat(100001) } }),
+    ),
+  ).toThrow();
+  expect(() =>
+    readProject(
+      JSON.stringify({
+        ...empty,
+        cues: [
+          {
+            start: 0,
+            end: 1,
+            text: "a",
+            speakerHint: { name: {}, excerpt: "b" },
+          },
+        ],
+      }),
+    ),
+  ).toThrow();
 });
 
 test("project export roundtrips edits but never serializes audio samples", () => {
