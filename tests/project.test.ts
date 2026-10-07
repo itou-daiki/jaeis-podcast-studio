@@ -2,6 +2,49 @@ import { expect, test } from "vitest";
 import { missingSources, readProject, saveProject } from "../src/project";
 import fc from "fast-check";
 
+test("voice adjustments roundtrip and invalid settings cannot enter a restored project", () => {
+  const track = {
+    name: "voice.wav",
+    size: 10,
+    lastModified: 1,
+    gainDb: 0,
+    offset: 0,
+    muted: false,
+  };
+  const project = {
+    version: 1 as const,
+    title: "音質",
+    cuts: [],
+    cues: [],
+    music: [],
+    tracks: [track],
+  };
+  expect(readProject(saveProject(project))).toEqual(project);
+  const voice = { noise: "standard", rumble: true, compress: true };
+  const adjusted = { ...project, tracks: [{ ...track, voice }] };
+  expect(readProject(JSON.stringify(adjusted))).toEqual(adjusted);
+  expect(
+    readProject(
+      JSON.stringify({
+        ...adjusted,
+        tracks: [{ ...adjusted.tracks[0], buffer: {}, processed: {} }],
+      }),
+    ),
+  ).toEqual(adjusted);
+  for (const invalid of [
+    null,
+    {},
+    { ...voice, noise: "unknown" },
+    { ...voice, rumble: "yes" },
+  ]) {
+    expect(() =>
+      readProject(
+        JSON.stringify({ ...project, tracks: [{ ...track, voice: invalid }] }),
+      ),
+    ).toThrow();
+  }
+});
+
 test("resume identifies missing sources, including repeated uses of the same jingle", () => {
   const project = readProject(
     JSON.stringify({

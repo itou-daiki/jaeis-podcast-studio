@@ -1,3 +1,4 @@
+import type { VoiceSettings } from "./voice";
 export type Range = { start: number; end: number };
 export type Cut = Range & { id: string; reason: string };
 export type Segment = Range & { outputStart: number };
@@ -7,6 +8,8 @@ export type Track = {
   size: number;
   lastModified: number;
   buffer: AudioBuffer;
+  processed?: AudioBuffer;
+  voice?: VoiceSettings;
   peaks: Float32Array;
   rms: Float32Array;
   gainDb: number;

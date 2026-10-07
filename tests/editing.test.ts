@@ -9,6 +9,26 @@ import {
 import fc from "fast-check";
 import { readProject, saveProject } from "../src/project";
 
+test("playback and export placements use adjusted voices without moving cuts", () => {
+  const buffer = { duration: 10 } as AudioBuffer;
+  const processed = { duration: 10 } as AudioBuffer;
+  const track = { buffer, processed, offset: 2, muted: false, gainDb: -3 };
+  const segments = buildSegments(12, [{ start: 4, end: 6 }]);
+  const original = buildPlacements(
+    [{ ...track, processed: undefined }],
+    segments,
+    [],
+  );
+  const adjusted = buildPlacements([track], segments, []);
+  expect(adjusted.placements.every((p) => p.buffer === processed)).toBe(true);
+  expect(original.placements.every((p) => p.buffer === buffer)).toBe(true);
+  expect(adjusted.mapping).toEqual(original.mapping);
+  expect(adjusted.duration).toBe(original.duration);
+  expect(adjusted.placements.map(({ buffer: _, ...p }) => p)).toEqual(
+    original.placements.map(({ buffer: _, ...p }) => p),
+  );
+});
+
 test("random fine-tuning is idempotent and survives project save without changing the original", () => {
   fc.assert(
     fc.property(

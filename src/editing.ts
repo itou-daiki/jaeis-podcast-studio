@@ -74,7 +74,7 @@ export function outputToSource(time: number, mapping: Segment[]): number {
 }
 
 export function buildPlacements(
-  tracks: Pick<Track, "buffer" | "offset" | "muted" | "gainDb">[],
+  tracks: Pick<Track, "buffer" | "processed" | "offset" | "muted" | "gainDb">[],
   segments: Segment[],
   music: MusicClip[],
 ): { placements: Placement[]; mapping: Segment[]; duration: number } {
@@ -121,7 +121,7 @@ export function buildPlacements(
         end = Math.min(s.end, track.offset + track.buffer.duration);
       if (end > start)
         placements.push({
-          buffer: track.buffer,
+          buffer: track.processed ?? track.buffer,
           when: s.outputStart + start - s.start,
           offset: start - track.offset,
           duration: end - start,

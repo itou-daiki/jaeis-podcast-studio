@@ -65,6 +65,8 @@ import { scriptJob } from "./script-jobs";
 import { CueSpeaker, ScriptPanel } from "./ScriptPanel";
 import { Waveform } from "./Waveform";
 import { CutEditor } from "./CutEditor";
+import { VoicePanel } from "./VoicePanel";
+import { hasVoiceEffects, originalVoice, type VoiceSettings } from "./voice";
 import { DeliveryPanel, NextStep, WorkflowNav, type Step } from "./Workflow";
 
 const draftKey = "jaeis-podcast-studio:draft:v1";
@@ -92,12 +94,20 @@ const safeName = (name: string) =>
   name.replace(/[\\/:*?"<>|]/g, "_").slice(0, 100) || "jaeis-podcast";
 const pcmBytes = (buffer: AudioBuffer) =>
   buffer.length * buffer.numberOfChannels * 4;
+const trackBytes = (track: Track) =>
+  pcmBytes(track.buffer) + (track.processed ? pcmBytes(track.processed) : 0);
+const rawTracks = (tracks: Track[]) =>
+  tracks.map((t) => ({ ...t, processed: undefined }));
 
 export default function App() {
   const [title, setTitle] = useState("新しいエピソード");
   const [step, setStep] = useState<Step>("source");
   const [initialDraft, setInitialDraft] = useState(loadDraft);
   const [pendingProject, setPendingProject] = useState<Project | null>(null);
+  const restoreAttempt = useRef<Project | null>(null);
+  const voiceAbort = useRef<AbortController | null>(null);
+  const [voiceRunning, setVoiceRunning] = useState(false);
+  const voicePreview = useRef<{ id: string; range: Range } | null>(null);
   const [saveStatus, setSaveStatus] = useState("");
   const [review, setReview] = useState<{
     signature: string;
@@ -199,13 +209,14 @@ export default function App() {
       cues,
       ...(script ? { script } : {}),
       tracks: tracks.map(
-        ({ name, size, lastModified, gainDb, offset, muted }) => ({
+        ({ name, size, lastModified, gainDb, offset, muted, voice }) => ({
           name,
           size,
           lastModified,
           gainDb,
           offset,
           muted,
+          ...(voice ? { voice } : {}),
         }),
       ),
       music: music.map(({ name, buffer, role, at, gainDb }) => ({
@@ -250,10 +261,12 @@ export default function App() {
       busy ||
       !missing ||
       missing.voices.length ||
-      missing.music.length
+      missing.music.length ||
+      restoreAttempt.current === pendingProject
     )
       return;
-    applyProject(pendingProject);
+    restoreAttempt.current = pendingProject;
+    void run(() => applyProject(pendingProject));
   }, [pendingProject, tracks, music, busy]);
 
   const stop = useCallback(() => {
@@ -272,6 +285,7 @@ export default function App() {
   const seek = useCallback(
     (time: number) => {
       stop();
+      voicePreview.current = null;
       playheadRef.current = time;
       setPlayhead(time);
     },
@@ -280,6 +294,7 @@ export default function App() {
   const select = useCallback(
     (range: Range) => {
       stop();
+      voicePreview.current = null;
       setEditingCutId(null);
       setSelection(range);
     },
@@ -294,6 +309,7 @@ export default function App() {
         } catch {}
       });
       asr.current?.terminate();
+      voiceAbort.current?.abort();
     },
     [],
   );
@@ -420,6 +436,112 @@ export default function App() {
     setMusic((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)));
   };
 
+  async function adjustVoice(
+    buffer: AudioBuffer,
+    settings: VoiceSettings,
+    range?: Range,
+    extraBytes = 0,
+  ) {
+    const frames = range
+      ? Math.ceil((range.end - range.start) * buffer.sampleRate)
+      : buffer.length;
+    const used =
+      tracks.reduce((n, t) => n + trackBytes(t), 0) +
+      music.reduce((n, m) => n + pcmBytes(m.buffer), 0);
+    if (
+      used + extraBytes + frames * buffer.numberOfChannels * 4 >
+      MAX_PCM_BYTES
+    )
+      throw new Error(
+        "音質調整用のメモリが足りません。不要な素材を外すか、反映済みの音質調整をいったん解除してください。",
+      );
+    const controller = new AbortController();
+    voiceAbort.current = controller;
+    setVoiceRunning(true);
+    try {
+      const { processVoice } = await import("./voice-engine");
+      return await processVoice(
+        buffer,
+        settings,
+        setBusy,
+        controller.signal,
+        range,
+      );
+    } finally {
+      voiceAbort.current = null;
+      setVoiceRunning(false);
+    }
+  }
+
+  async function previewVoice(track: Track, settings = originalVoice) {
+    await run(async () => {
+      const ctx = audioContext();
+      await ctx.resume();
+      if (voicePreview.current?.id !== track.id) {
+        const selected = selection.end > selection.start;
+        const start = Math.max(
+          0,
+          (selected ? selection.start : playheadRef.current) - track.offset,
+        );
+        const end = Math.min(
+          track.buffer.duration,
+          start + 10,
+          selected ? selection.end - track.offset : Infinity,
+        );
+        if (end <= start)
+          throw new Error(
+            "この音声がある場所を波形で選んでから試聴してください。",
+          );
+        voicePreview.current = { id: track.id, range: { start, end } };
+      }
+      const range = voicePreview.current.range;
+      const buffer = await adjustVoice(track.buffer, settings, range);
+      const start = ctx.currentTime + 0.06;
+      sources.current = schedule(
+        ctx,
+        [
+          {
+            buffer,
+            when: 0,
+            offset: 0,
+            duration: buffer.duration,
+            gain: 10 ** (track.gainDb / 20),
+            fade: 0.005,
+          },
+        ],
+        0,
+        buffer.duration,
+        start,
+      );
+      setPlaying(true);
+      setNotice(
+        `${track.name}：${hasVoiceEffects(settings) ? "調整後" : "原音"}を単独で試聴中（全体への反映はまだ行いません）。`,
+      );
+      const tick = () => {
+        const time = Math.max(0, ctx.currentTime - start);
+        if (time >= buffer.duration) {
+          stop();
+          return;
+        }
+        playheadRef.current = track.offset + range.start + time;
+        setPlayhead(playheadRef.current);
+        raf.current = requestAnimationFrame(tick);
+      };
+      raf.current = requestAnimationFrame(tick);
+    });
+  }
+
+  async function applyVoice(track: Track, settings: VoiceSettings) {
+    await run(async () => {
+      const processed = await adjustVoice(track.buffer, settings);
+      updateTrack(track.id, { voice: settings, processed });
+      setEdited(true);
+      setNotice(
+        "音質調整を全体に反映しました。編集後の再生と書き出しに使われます。原音は保持しています。",
+      );
+    });
+  }
+
   async function importFiles(files: File[]) {
     if (busy) return;
     if (
@@ -436,7 +558,7 @@ export default function App() {
         throw new Error("声トラックは8本までです。");
       const next = [...tracks];
       let bytes =
-        next.reduce((n, t) => n + pcmBytes(t.buffer), 0) +
+        next.reduce((n, t) => n + trackBytes(t), 0) +
         music.reduce((n, m) => n + pcmBytes(m.buffer), 0);
       for (const file of files) {
         if (
@@ -490,13 +612,14 @@ export default function App() {
     }
     try {
       stop();
+      voicePreview.current = null;
       const ctx = audioContext();
       await ctx.resume();
       const selectedPlan = mode
         ? previewCuts
           ? buildPlacements(tracks, buildSegments(duration, previewCuts), music)
           : plan
-        : buildPlacements(tracks, buildSegments(duration, []), []);
+        : buildPlacements(rawTracks(tracks), buildSegments(duration, []), []);
       const begin = fromStart
         ? 0
         : range
@@ -610,7 +733,7 @@ export default function App() {
           : { start: 0, end: duration };
       setBusy("文字起こし用の音声を準備しています…");
       const sourcePlan = buildPlacements(
-        tracks,
+        rawTracks(tracks),
         [{ ...range, outputStart: 0 }],
         [],
       );
@@ -736,6 +859,7 @@ export default function App() {
     )
       return;
     stop();
+    restoreAttempt.current = null;
     setPendingProject(project);
     setInitialDraft({});
     setTracks([]);
@@ -752,7 +876,7 @@ export default function App() {
     seek(0);
     setSaveStatus("");
   }
-  function applyProject(project: Project) {
+  async function applyProject(project: Project) {
     try {
       if (
         project.tracks.length !== tracks.length ||
@@ -811,6 +935,17 @@ export default function App() {
           );
         return { ...available.splice(index, 1)[0], ...s };
       });
+      let extraBytes = 0;
+      for (const track of restored) {
+        if (!track.voice || !hasVoiceEffects(track.voice)) continue;
+        track.processed = await adjustVoice(
+          track.buffer,
+          track.voice,
+          undefined,
+          extraBytes,
+        );
+        extraBytes += pcmBytes(track.processed);
+      }
       setTracks(restored);
       setMusic(restoredMusic);
       setCues(project.cues);
@@ -826,8 +961,8 @@ export default function App() {
       setStep("edit");
       setNotice("編集内容を復元しました。");
     } catch (e) {
-      setError(message(e));
       // Keep the saved draft untouched; let the user retry with matching files.
+      throw e;
     }
   }
 
@@ -900,7 +1035,7 @@ export default function App() {
             rel="noreferrer"
             className="version"
           >
-            v0.4.1
+            v0.5.0
           </a>
         </div>
       </header>
@@ -995,7 +1130,7 @@ export default function App() {
               <div>
                 <strong>再開に必要な素材を選んでください</strong>
                 <p>
-                  すべて揃うと、カット・字幕・音量設定を自動で復元します。音声の名前・サイズ・更新日時を照合します。
+                  すべて揃うと、カット・字幕・音量・音質設定を自動で復元します。音質調整は元音声から再処理します。音声の名前・サイズ・更新日時を照合します。
                 </p>
                 {missing.voices.length ? (
                   <p>収録音声：{missing.voices.join("、")}</p>
@@ -1018,6 +1153,14 @@ export default function App() {
                   onClick={() => musicInput.current?.click()}
                 >
                   音楽を選ぶ
+                </button>
+              ) : null}
+              {!missing.voices.length && !missing.music.length ? (
+                <button
+                  className="secondary"
+                  onClick={() => void run(() => applyProject(pendingProject))}
+                >
+                  設定の復元を再試行
                 </button>
               ) : null}
               <button
@@ -1439,75 +1582,94 @@ export default function App() {
                   {step === "sound" ? (
                     <div className="mix-section">
                       <div className="section-heading">
-                        <h3>声のバランス</h3>
+                        <h3>声の音量・ノイズ</h3>
                         <span>別々に録った音声は開始位置を調整</span>
                       </div>
                       {tracks.map((t) => (
-                        <div className="mixer" key={t.id}>
-                          <button
-                            className="icon-button"
-                            aria-label={`${t.name} ${t.muted ? "ミュート解除" : "ミュート"}`}
-                            onClick={() =>
-                              updateTrack(t.id, { muted: !t.muted })
-                            }
-                          >
-                            {t.muted ? (
-                              <VolumeX size={17} />
-                            ) : (
-                              <Volume2 size={17} />
-                            )}
-                          </button>
-                          <span title={t.name}>{t.name}</span>
-                          <input
-                            aria-label={`${t.name} 音量`}
-                            type="range"
-                            min={-24}
-                            max={12}
-                            step={0.5}
-                            value={t.gainDb}
-                            onChange={(e) =>
-                              updateTrack(t.id, {
-                                gainDb: Number(e.target.value),
-                              })
-                            }
-                          />
-                          <small>
-                            {t.gainDb > 0 ? "+" : ""}
-                            {t.gainDb} dB
-                          </small>
-                          <label>
-                            開始{" "}
+                        <div className="voice-track" key={t.id}>
+                          <div className="mixer">
+                            <button
+                              className="icon-button"
+                              aria-label={`${t.name} ${t.muted ? "ミュート解除" : "ミュート"}`}
+                              onClick={() =>
+                                updateTrack(t.id, { muted: !t.muted })
+                              }
+                            >
+                              {t.muted ? (
+                                <VolumeX size={17} />
+                              ) : (
+                                <Volume2 size={17} />
+                              )}
+                            </button>
+                            <span title={t.name}>{t.name}</span>
                             <input
-                              aria-label={`${t.name} 開始位置（秒）`}
-                              type="number"
-                              step={0.01}
-                              min={-3600}
-                              max={3600}
-                              value={t.offset}
-                              onChange={(e) => {
-                                if (
-                                  (cuts.length || cues.length) &&
-                                  !window.confirm(
-                                    "開始位置を変更すると、カットと文字起こしがリセットされます。変更しますか？",
-                                  )
-                                )
-                                  return;
-                                setHistory([[]]);
-                                setHistoryIndex(0);
-                                setCues([]);
+                              aria-label={`${t.name} 音量`}
+                              type="range"
+                              min={-24}
+                              max={12}
+                              step={0.5}
+                              value={t.gainDb}
+                              onChange={(e) =>
                                 updateTrack(t.id, {
-                                  offset: Math.max(
-                                    -3600,
-                                    Math.min(3600, Number(e.target.value)),
-                                  ),
-                                });
-                                setNotice(
-                                  "同期位置を変えたため、時刻に依存するカットと字幕をリセットしました。",
-                                );
-                              }}
+                                  gainDb: Number(e.target.value),
+                                })
+                              }
                             />
-                            秒
-                          </label>
+                            <small>
+                              {t.gainDb > 0 ? "+" : ""}
+                              {t.gainDb} dB
+                            </small>
+                            <label>
+                              開始{" "}
+                              <input
+                                aria-label={`${t.name} 開始位置（秒）`}
+                                type="number"
+                                step={0.01}
+                                min={-3600}
+                                max={3600}
+                                value={t.offset}
+                                onChange={(e) => {
+                                  if (
+                                    (cuts.length || cues.length) &&
+                                    !window.confirm(
+                                      "開始位置を変更すると、カットと文字起こしがリセットされます。変更しますか？",
+                                    )
+                                  )
+                                    return;
+                                  setHistory([[]]);
+                                  setHistoryIndex(0);
+                                  setCues([]);
+                                  updateTrack(t.id, {
+                                    offset: Math.max(
+                                      -3600,
+                                      Math.min(3600, Number(e.target.value)),
+                                    ),
+                                  });
+                                  setNotice(
+                                    "同期位置を変えたため、時刻に依存するカットと字幕をリセットしました。",
+                                  );
+                                }}
+                              />
+                              秒
+                            </label>
+                          </div>
+                          <VoicePanel
+                            name={t.name}
+                            applied={t.voice}
+                            onPreview={(settings) =>
+                              void previewVoice(t, settings)
+                            }
+                            onApply={(settings) => void applyVoice(t, settings)}
+                            onClear={() => {
+                              updateTrack(t.id, {
+                                voice: undefined,
+                                processed: undefined,
+                              });
+                              setNotice(
+                                "音質調整を解除しました。カット・音量設定はそのままです。",
+                              );
+                            }}
+                          />
                         </div>
                       ))}
                     </div>
@@ -2244,7 +2406,7 @@ export default function App() {
                     "OP・ED・ジングルは3分以内の音源を選んでください。",
                   );
                 if (
-                  tracks.reduce((s, t) => s + pcmBytes(t.buffer), 0) +
+                  tracks.reduce((s, t) => s + trackBytes(t), 0) +
                     music.reduce((s, m) => s + pcmBytes(m.buffer), 0) +
                     pcmBytes(buffer) >
                   MAX_PCM_BYTES
@@ -2301,6 +2463,18 @@ export default function App() {
               文字起こしを中止
             </button>
           ) : null}
+          {voiceRunning ? (
+            <button
+              onClick={() => {
+                voiceAbort.current?.abort();
+                setNotice(
+                  "音質調整を中止しました。元の音声・保存済みの編集内容は変更していません。",
+                );
+              }}
+            >
+              音質調整を中止
+            </button>
+          ) : null}
         </div>
       ) : null}
       {help ? (
@@ -2335,7 +2509,7 @@ export default function App() {
                 候補は必ず試聴して採用。誤認識や似た表現だけで会話を自動削除しません。
               </li>
               <li>
-                音楽を追加し、音量を調整。音声と編集内容の両方を保存してください。
+                声の音量・ノイズを調整し、原音と聞き比べて全体に反映。音楽も追加できます。音声と編集内容の両方を保存してください。
               </li>
             </ol>
             <h3>保存とプライバシー</h3>

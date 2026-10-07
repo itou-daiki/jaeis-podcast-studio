@@ -1,6 +1,7 @@
 import type { Cut, Cue } from "./types";
 import { validateCues } from "./transcript";
 import { MAX_SCRIPT_LENGTH } from "./speakers";
+import { isVoiceSettings, type VoiceSettings } from "./voice";
 
 export type SavedScript = { text: string; name?: string };
 
@@ -11,6 +12,7 @@ type SavedTrack = {
   gainDb: number;
   offset: number;
   muted: boolean;
+  voice?: VoiceSettings;
 };
 type SavedMusic = {
   name: string;
@@ -99,7 +101,8 @@ export function readProject(text: string): Project {
       !finite(t.lastModified, 0, 2 ** 53 - 1) ||
       !finite(t.gainDb, -60, 24) ||
       !finite(t.offset, -3600, 3600) ||
-      typeof t.muted !== "boolean"
+      typeof t.muted !== "boolean" ||
+      (t.voice !== undefined && !isVoiceSettings(t.voice))
     )
       throw new Error("素材の設定が正しくありません。");
   for (const m of p.music)
@@ -129,7 +132,23 @@ export function readProject(text: string): Project {
       end: c.end,
       reason: c.reason,
     })),
-    tracks: p.tracks,
+    tracks: p.tracks.map((t: SavedTrack) => ({
+      name: t.name,
+      size: t.size,
+      lastModified: t.lastModified,
+      gainDb: t.gainDb,
+      offset: t.offset,
+      muted: t.muted,
+      ...(t.voice
+        ? {
+            voice: {
+              noise: t.voice.noise,
+              rumble: t.voice.rumble,
+              compress: t.voice.compress,
+            },
+          }
+        : {}),
+    })),
     music: p.music,
     cues: validateCues(p.cues),
     ...(p.script
