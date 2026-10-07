@@ -26,6 +26,41 @@ export type Project = {
 };
 export const saveProject = (project: Project) =>
   JSON.stringify(project, null, 2);
+
+// Consume matches: two uses of one music file require two loaded clips.
+export function missingSources(
+  project: Project,
+  tracks: Pick<SavedTrack, "name" | "size" | "lastModified">[],
+  music: Pick<SavedMusic, "name" | "duration">[],
+) {
+  const voices = [...tracks],
+    clips = [...music];
+  return {
+    voices: project.tracks
+      .filter((s) => {
+        const i = voices.findIndex(
+          (t) =>
+            t.name === s.name &&
+            t.size === s.size &&
+            t.lastModified === s.lastModified,
+        );
+        if (i < 0) return true;
+        voices.splice(i, 1);
+        return false;
+      })
+      .map((s) => s.name),
+    music: project.music
+      .filter((s) => {
+        const i = clips.findIndex(
+          (m) => m.name === s.name && Math.abs(m.duration - s.duration) < 0.01,
+        );
+        if (i < 0) return true;
+        clips.splice(i, 1);
+        return false;
+      })
+      .map((s) => s.name),
+  };
+}
 export function readProject(text: string): Project {
   if (text.length > 10000000)
     throw new Error("プロジェクトファイルが大きすぎます。");

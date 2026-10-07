@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-07T21:33:02Z",
+  "title": "Design System: JAEIS Podcast Studio",
+  "extensions": {
+    "colorMeta": {
+      "indigo": { "role": "primary", "displayName": "操作のインディゴ" },
+      "teal": { "role": "secondary", "displayName": "端末内処理のティール" },
+      "ink": { "role": "neutral", "displayName": "本文の濃紺" },
+      "muted": { "role": "neutral", "displayName": "補足の青灰" },
+      "line": { "role": "neutral", "displayName": "淡い境界線" },
+      "canvas": { "role": "neutral", "displayName": "寒色のページ背景" },
+      "surface": { "role": "neutral", "displayName": "白い作業面" },
+      "transport": { "role": "neutral", "displayName": "濃色の再生帯" }
+    },
+    "typographyMeta": {
+      "body": { "displayName": "日本語本文", "purpose": "システムの日本語ゴシックを使う基本書体。" },
+      "title": { "displayName": "エピソード・読込見出し", "purpose": "編集対象と最初の操作を示す。" },
+      "time": { "displayName": "再生時刻", "purpose": "再生帯の元音声の現在時刻。" }
+    },
+    "shadows": [
+      { "name": "primary-button", "value": "0 2px 3px #273b8414", "purpose": "主要ボタンの小さい影。" },
+      { "name": "toast", "value": "0 8px 40px #26385820", "purpose": "画面下部の固定通知。" },
+      { "name": "modal", "value": "0 25px 80px #13213e33", "purpose": "ヘルプダイアログ。" }
+    ],
+    "motion": [
+      { "name": "button-transition", "value": "background 0.15s, color 0.15s", "purpose": "ボタンの背景・文字色の遷移。" },
+      { "name": "busy-spinner", "value": "spin 1s linear infinite", "purpose": "処理中の回転表示。" },
+      { "name": "reduced-motion", "value": "animation: none !important; transition: none !important", "purpose": "prefers-reduced-motion: reduce で動きを停止。" }
+    ],
+    "breakpoints": [
+      { "name": "single-column-max", "value": "800px" },
+      { "name": "compact-desktop-max", "value": "1200px" },
+      { "name": "wide-desktop-min", "value": "1500px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "主要ボタン",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "読込・候補検出・書き出しの主要操作。",
+      "html": "<button class=\"ds-primary\">音声・動画を選ぶ</button>",
+      "css": ".ds-primary { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:40px; padding:11px 15px; border:0; border-radius:7px; background:var(--blue,#3444a5); color:#fff; font:600 14px 'Hiragino Kaku Gothic ProN','BIZ UDPGothic','Yu Gothic',system-ui,sans-serif; box-shadow:0 2px 3px #273b8414; cursor:pointer; transition:background .15s,color .15s; } .ds-primary:hover:not(:disabled) { filter:brightness(.96); } .ds-primary:focus-visible { outline:3px solid #8794ee; outline-offset:3px; } .ds-primary:disabled { opacity:.4; cursor:not-allowed; } @media(prefers-reduced-motion:reduce) { .ds-primary { transition:none; } }"
+    },
+    {
+      "name": "副ボタン",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "保存・再開・工程移動などの補助操作。",
+      "html": "<button class=\"ds-secondary\">編集を保存</button>",
+      "css": ".ds-secondary { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:40px; padding:11px 15px; border:1px solid var(--line,#e2e6ef); border-radius:7px; background:#fff; color:var(--ink,#25324b); font:600 14px 'Hiragino Kaku Gothic ProN','BIZ UDPGothic','Yu Gothic',system-ui,sans-serif; cursor:pointer; transition:background .15s,color .15s; } .ds-secondary:hover:not(:disabled) { filter:brightness(.96); } .ds-secondary:focus-visible { outline:3px solid #8794ee; outline-offset:3px; } .ds-secondary:disabled { opacity:.4; cursor:not-allowed; } @media(prefers-reduced-motion:reduce) { .ds-secondary { transition:none; } }"
+    },
+    {
+      "name": "テキストボタン",
+      "kind": "button",
+      "refersTo": "button-text",
+      "description": "試聴・ヘルプなどの軽い補助操作。",
+      "html": "<button class=\"ds-text\">編集後を聞く</button>",
+      "css": ".ds-text { display:inline-flex; align-items:center; gap:7px; border:0; padding:6px 0; background:transparent; color:var(--blue,#3444a5); font:12px 'Hiragino Kaku Gothic ProN','BIZ UDPGothic','Yu Gothic',system-ui,sans-serif; cursor:pointer; transition:background .15s,color .15s; } .ds-text:hover:not(:disabled) { filter:brightness(.96); } .ds-text:focus-visible { outline:3px solid #8794ee; outline-offset:3px; } .ds-text:disabled { opacity:.4; cursor:not-allowed; } @media(prefers-reduced-motion:reduce) { .ds-text { transition:none; } }"
+    },
+    {
+      "name": "数値入力",
+      "kind": "input",
+      "refersTo": "number-field",
+      "description": "音量や設定の数値を直接入力する。範囲指定欄にはより小さい寸法の派生形がある。",
+      "html": "<input class=\"ds-number\" type=\"number\" aria-label=\"数値設定\" value=\"0\" />",
+      "css": ".ds-number { width:80px; padding:7px; border:1px solid var(--line,#e2e6ef); border-radius:6px; background:white; color:var(--ink,#25324b); caret-color:var(--blue,#3444a5); font:14px 'Hiragino Kaku Gothic ProN','BIZ UDPGothic','Yu Gothic',system-ui,sans-serif; } .ds-number:focus-visible { outline:3px solid #8794ee; outline-offset:3px; }"
+    },
+    {
+      "name": "4工程ナビゲーション",
+      "kind": "nav",
+      "refersTo": "workflow-step",
+      "description": "現在地を番号・太字・下線で示す。800px以下では2列。スニペットは現在工程の静的見本。",
+      "html": "<nav class=\"ds-workflow\" aria-label=\"編集の手順\"><button><span>1</span>素材を読み込む</button><button aria-current=\"step\"><span>2</span>不要な部分をカット</button><button><span>3</span>音量・音楽を整える</button><button><span>4</span>確認して書き出す</button></nav>",
+      "css": ".ds-workflow { display:flex; border-bottom:1px solid var(--line,#e2e6ef); margin-bottom:22px; } .ds-workflow button { display:inline-flex; align-items:center; gap:7px; flex:1; padding:14px 16px; min-height:54px; border:0; border-bottom:3px solid transparent; background:transparent; color:var(--muted,#59677d); text-align:left; font:13px 'Hiragino Kaku Gothic ProN','BIZ UDPGothic','Yu Gothic',system-ui,sans-serif; cursor:pointer; transition:background .15s,color .15s; } .ds-workflow button[aria-current=step] { color:var(--blue,#3444a5); border-bottom-color:var(--blue,#3444a5); font-weight:700; } .ds-workflow button span { flex:none; width:24px; font-weight:700; font-variant-numeric:tabular-nums; } .ds-workflow button:hover:not(:disabled) { filter:brightness(.96); } .ds-workflow button:focus-visible { outline:3px solid #8794ee; outline-offset:3px; } .ds-workflow button:disabled { opacity:.4; cursor:not-allowed; } @media(max-width:800px) { .ds-workflow { display:grid; grid-template-columns:1fr 1fr; margin-bottom:16px; } .ds-workflow button { padding:10px 8px; font-size:12px; min-height:48px; } .ds-workflow button span { width:17px; } } @media(prefers-reduced-motion:reduce) { .ds-workflow button { transition:none; } }"
+    },
+    {
+      "name": "候補種別ラベル",
+      "kind": "chip",
+      "description": "候補の種類を表示する非操作ラベル。無音は黄系、言い直し・繰り返しは紫系。",
+      "html": "<span class=\"ds-kind\">無音</span> <span class=\"ds-kind ds-retake\">言い直し</span>",
+      "css": ".ds-kind { font:10px 'Hiragino Kaku Gothic ProN','BIZ UDPGothic','Yu Gothic',system-ui,sans-serif; color:#9b671f; background:#fff3df; padding:3px 5px; border-radius:3px; } .ds-kind.ds-retake { background:#f0eaf8; color:#7963a0; }"
+    },
+    {
+      "name": "工程の詳細パネル",
+      "kind": "custom",
+      "refersTo": "work-panel",
+      "description": "現在工程の実作業を収める白い領域。装飾カードではない。",
+      "html": "<aside class=\"ds-panel\"><div class=\"ds-content\"><h2>書き出し前の確認</h2><p>編集後を先頭から聞いて確認してください。</p></div></aside>",
+      "css": ".ds-panel { min-width:0; border:1px solid var(--line,#e2e6ef); border-radius:12px; background:#fff; color:var(--ink,#25324b); font-family:'Hiragino Kaku Gothic ProN','BIZ UDPGothic','Yu Gothic',system-ui,sans-serif; } .ds-content { padding:20px 17px; } .ds-content h2 { margin:0; font-size:14px; font-weight:700; } .ds-content p { margin:12px 0; font-size:12px; line-height:1.85; color:var(--muted,#59677d); } @media(max-width:800px) { .ds-content { padding:18px; } }"
+    },
+    {
+      "name": "再生帯",
+      "kind": "custom",
+      "description": "波形に接続する濃色の再生・時刻領域。スニペットは状態の見本で、音声は再生しない。",
+      "html": "<div class=\"ds-transport\"><button class=\"ds-play\" aria-label=\"再生\"><svg width=\"17\" height=\"17\" viewBox=\"0 0 24 24\" fill=\"currentColor\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polygon points=\"6 3 20 12 6 21 6 3\"></polygon></svg></button><div class=\"ds-time\"><small>元音声</small>00:00<span>/ 00:12</span></div><label class=\"ds-preview\"><input type=\"checkbox\" checked />編集後を試聴</label></div>",
+      "css": ".ds-transport { display:flex; align-items:center; height:70px; padding:0 17px; gap:14px; background:#27344f; color:#fff; font-family:'Hiragino Kaku Gothic ProN','BIZ UDPGothic','Yu Gothic',system-ui,sans-serif; } .ds-play { display:inline-flex; align-items:center; justify-content:center; flex:none; width:37px; height:37px; border:0; border-radius:50%; background:#fff; color:#27344f; cursor:pointer; transition:background .15s,color .15s; } .ds-play:hover { filter:brightness(.96); } .ds-play:focus-visible,.ds-preview input:focus-visible { outline:3px solid #8794ee; outline-offset:3px; } .ds-time { font:20px ui-monospace,'SFMono-Regular',monospace; letter-spacing:-.02em; white-space:nowrap; } .ds-time small { font:11px system-ui,sans-serif; margin-right:8px; color:#c8d2e8; } .ds-time span { font-size:11px; color:#acb7d0; margin-left:7px; letter-spacing:0; } .ds-preview { display:flex; align-items:center; gap:3px; margin-left:auto; white-space:nowrap; font-size:10px; } .ds-preview input { accent-color:var(--blue,#3444a5); } @media(max-width:800px) { .ds-transport { flex-wrap:wrap; height:auto; padding:14px; gap:11px; } .ds-time { font-size:18px; } .ds-time small { display:none; } } @media(prefers-reduced-motion:reduce) { .ds-play { transition:none; } }"
+    }
+  ],
+  "narrative": {
+    "overview": "校務の合間に音声編集を担当する先生が、現在の作業と次の操作を見分けられる画面。白い作業面、寒色の淡い背景、インディゴの操作色を基調とし、波形と試聴操作を中心に据える。情報のまとまりは境界線と余白で示す。\n\nこれは `src/style.css`、`src/App.tsx`、`src/Workflow.tsx` と既存の完成画面から抽出した現行実装の記録である。利用者像は `PRODUCT.md` の確認済み前提に基づく。新たな美的承認、比喩、ユーザー調査結果は含まない。",
+    "keyCharacteristics": [
+      "日本語の操作名と番号で手順を示す。",
+      "波形の作業面と、その工程に必要な詳細操作を分ける。",
+      "状態は文字、下線、形状を伴って示し、色だけに依存しない。"
+    ],
+    "rules": [],
+    "dos": [
+      "Do 操作結果が分かる日本語と、現在の工程を示す番号・下線を維持する。",
+      "Do 波形、再生、選択範囲を一つの作業面として扱い、詳細操作は工程に応じて表示する。",
+      "Do 復元に必要な素材、保存の制約、未判断候補、出力条件を具体的な文章で示す。",
+      "Do フォーカス表示、数値による範囲指定、折り返し、動きを減らす設定を維持する。"
+    ],
+    "donts": [
+      "Don't 装飾用カードや無関係な指標を増やして作業領域を圧迫しない。",
+      "Don't 自動提案を承認済みの編集として見せたり、確認メモを機械による公開承認として扱ったりしない。",
+      "Don't この記録を新しい配色・比喩・利用者調査の承認と解釈しない。"
+    ]
+  }
+}
