@@ -51,6 +51,40 @@ test("subtitle serialization retains time and speech", () => {
   ).toThrow();
 });
 
+test("a nearby pause and equipment failure suggest an interruption, never an automatic cut", () => {
+  const cues = [
+    { start: 20, end: 24, text: "すみません、ちょっと待ってください。" },
+    { start: 25, end: 30, text: "パソコンが一瞬落ちました。" },
+    { start: 32, end: 38, text: "では続きからお願いします。" },
+  ];
+  const candidates = detectRetakes(cues);
+  expect(candidates).toHaveLength(1);
+  expect(candidates[0]).toMatchObject({
+    start: 20,
+    end: 30,
+    kind: "retake",
+    reason: "収録中断の可能性",
+  });
+  expect(candidates[0].detail).toContain("再開位置");
+  expect(cues[2].text).toBe("では続きからお願いします。");
+});
+
+test("a pause alone or classroom anecdotes do not become interruption candidates", () => {
+  for (const text of [
+    "ちょっと待ってください。ここが大事なんです。",
+    "生徒にちょっと待ってくださいと言ったら、パソコンが落ちました。",
+    "「すみません、パソコンが落ちました」という相談があります。",
+    "昨年、すみませんと謝ったあとでパソコンが落ちました。",
+  ])
+    expect(detectRetakes([{ start: 0, end: 5, text }])).toEqual([]);
+  expect(
+    detectRetakes([
+      { start: 0, end: 2, text: "ちょっと待ってください" },
+      { start: 50, end: 55, text: "パソコンが落ちました" },
+    ]),
+  ).toEqual([]);
+});
+
 test("Whisper JSON accepts segments or timestamp chunks, never guesses missing times", () => {
   const cue = { start: 3, end: 7, text: "実際に話した内容です。" };
   expect(parseTranscript(JSON.stringify({ segments: [cue] }))).toEqual([cue]);

@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   AudioLines,
   Upload,
@@ -168,6 +175,8 @@ export default function App() {
     asr = useRef<Worker | null>(null),
     abortAsr = useRef<(() => void) | null>(null);
   const playheadRef = useRef(0);
+  const timeline = useRef<HTMLDivElement>(null);
+  const zoomAnchor = useRef<number | null>(null);
   const duration = Math.max(
     0,
     ...tracks.map((t) => t.offset + t.buffer.duration),
@@ -176,6 +185,27 @@ export default function App() {
     () => buildSegments(duration, cuts),
     [duration, cuts],
   );
+  function changeZoom(next: number) {
+    const el = timeline.current;
+    if (next === zoom || !el || !duration) return;
+    const left = (el.scrollLeft / el.scrollWidth) * duration;
+    const right =
+      ((el.scrollLeft + el.clientWidth) / el.scrollWidth) * duration;
+    zoomAnchor.current =
+      selection.end > selection.start
+        ? selection.start
+        : playheadRef.current >= left && playheadRef.current <= right
+          ? playheadRef.current
+          : (left + right) / 2;
+    setZoom(next);
+  }
+  useLayoutEffect(() => {
+    const el = timeline.current;
+    if (!el || zoomAnchor.current === null || !duration) return;
+    el.scrollLeft =
+      (zoomAnchor.current / duration) * el.scrollWidth - el.clientWidth * 0.25;
+    zoomAnchor.current = null;
+  }, [zoom, duration]);
   const plan = useMemo(
     () => buildPlacements(tracks, segments, music),
     [tracks, segments, music],
@@ -288,8 +318,14 @@ export default function App() {
       voicePreview.current = null;
       playheadRef.current = time;
       setPlayhead(time);
+      const el = timeline.current;
+      if (el && duration) {
+        const x = (time / duration) * el.scrollWidth;
+        if (x < el.scrollLeft || x > el.scrollLeft + el.clientWidth)
+          el.scrollLeft = x - el.clientWidth * 0.25;
+      }
     },
-    [stop],
+    [stop, duration],
   );
   const select = useCallback(
     (range: Range) => {
@@ -1035,7 +1071,7 @@ export default function App() {
             rel="noreferrer"
             className="version"
           >
-            v0.5.0
+            v0.5.1
           </a>
         </div>
       </header>
@@ -1298,16 +1334,14 @@ export default function App() {
                           aria-label="タイムラインを縮小"
                           title="縮小"
                           disabled={zoom <= 1}
-                          onClick={() =>
-                            setZoom((current) => Math.max(1, current / 2))
-                          }
+                          onClick={() => changeZoom(Math.max(1, zoom / 2))}
                         >
                           <Minus size={17} />
                         </button>
                         <select
                           aria-label="波形の拡大率"
                           value={zoom}
-                          onChange={(e) => setZoom(Number(e.target.value))}
+                          onChange={(e) => changeZoom(Number(e.target.value))}
                         >
                           <option value={1}>全体</option>
                           <option value={2}>2倍</option>
@@ -1322,9 +1356,7 @@ export default function App() {
                           aria-label="タイムラインを拡大"
                           title="拡大"
                           disabled={zoom >= 32}
-                          onClick={() =>
-                            setZoom((current) => Math.min(32, current * 2))
-                          }
+                          onClick={() => changeZoom(Math.min(32, zoom * 2))}
                         >
                           <Plus size={17} />
                         </button>
@@ -1409,7 +1441,7 @@ export default function App() {
                 </div>
               ) : (
                 <>
-                  <div className="timeline-scroll">
+                  <div className="timeline-scroll" ref={timeline}>
                     <div
                       className="timeline-inner"
                       style={{ width: `${zoom * 100}%` }}
@@ -1685,44 +1717,52 @@ export default function App() {
                     <small>短縮 {formatTime(removed)} · 元に戻せます</small>
                   </div>
                   {cuts.length ? (
-                    cuts.map((c) => (
-                      <div className="log-row" key={c.id}>
-                        <button
-                          className="text-button"
-                          onClick={() => {
-                            select(c);
-                            seek(c.start);
-                          }}
-                        >
-                          {formatTime(c.start, true)}–{formatTime(c.end, true)}
-                        </button>
-                        <span>{c.reason}</span>
-                        <button
-                          className="text-button"
-                          onClick={() => beginCutEdit(c)}
-                        >
-                          微調整
-                        </button>
-                        <button
-                          className="icon-button"
-                          onClick={() =>
-                            changeCuts(cuts.filter((k) => k.id !== c.id))
-                          }
-                          aria-label={`${formatTime(c.start)} のカットを取り消す`}
-                        >
-                          <Undo2 size={14} />
-                        </button>
-                        <button
-                          className="text-button"
-                          onClick={() => {
-                            select(c);
-                            void play(true, c);
-                          }}
-                        >
-                          つなぎ目を聞く
-                        </button>
-                      </div>
-                    ))
+                    <div
+                      className="log-list"
+                      role="region"
+                      aria-label="カット履歴一覧"
+                      tabIndex={0}
+                    >
+                      {cuts.map((c) => (
+                        <div className="log-row" key={c.id}>
+                          <button
+                            className="text-button"
+                            onClick={() => {
+                              select(c);
+                              seek(c.start);
+                            }}
+                          >
+                            {formatTime(c.start, true)}–
+                            {formatTime(c.end, true)}
+                          </button>
+                          <span>{c.reason}</span>
+                          <button
+                            className="text-button"
+                            onClick={() => beginCutEdit(c)}
+                          >
+                            微調整
+                          </button>
+                          <button
+                            className="icon-button"
+                            onClick={() =>
+                              changeCuts(cuts.filter((k) => k.id !== c.id))
+                            }
+                            aria-label={`${formatTime(c.start)} のカットを取り消す`}
+                          >
+                            <Undo2 size={14} />
+                          </button>
+                          <button
+                            className="text-button"
+                            onClick={() => {
+                              select(c);
+                              void play(true, c);
+                            }}
+                          >
+                            つなぎ目を聞く
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   ) : (
                     <p className="hint">
                       波形をドラッグして範囲を選ぶか、右の候補から確認します。
@@ -1872,7 +1912,10 @@ export default function App() {
                       候補を探す
                     </button>
                     <p className="hint compact">
-                      リテイク検出には文字起こしが必要です。原稿との違いだけでは判定しません。
+                      {cues.length
+                        ? `文字起こし${cues.length}区間から、言い直し・収録中断の候補も探します。`
+                        : "言い直し・収録中断も探す場合は、先に文字起こしを読み込んでください。"}
+                      原稿との違いだけでは判定しません。
                     </p>
                     <div className="candidate-list">
                       {remaining.length ? (
@@ -1883,7 +1926,9 @@ export default function App() {
                                 {c.kind === "silence"
                                   ? "静かな区間"
                                   : c.kind === "retake"
-                                    ? "言い直し"
+                                    ? c.reason === "収録中断の可能性"
+                                      ? "収録中断？"
+                                      : "言い直し"
                                     : "似た発言"}
                               </span>
                               <small>
@@ -1941,7 +1986,9 @@ export default function App() {
                           <p>
                             {candidates.length
                               ? "すべての候補を確認しました。波形から手動でカットすることもできます。"
-                              : "「候補を探す」で静かな区間を探せます。言い直しも探す場合は、先に文字起こしをしてください。"}
+                              : cues.length
+                                ? "「候補を探す」で、静かな間や言い直し・収録中断を確認します。"
+                                : "「候補を探す」で静かな区間を探せます。言い直しも探す場合は、先に文字起こしをしてください。"}
                           </p>
                         </div>
                       )}

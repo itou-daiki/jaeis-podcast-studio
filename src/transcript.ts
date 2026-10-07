@@ -153,8 +153,42 @@ function similarity(a: string, b: string): number {
 }
 export function detectRetakes(cues: Cue[]): Candidate[] {
   const result: Candidate[] = [];
+  const anecdote =
+    /[「『"]|という|と言|生徒|授業|例えば|たとえば|以前|昨日|先日|昨年|去年/;
   cues.forEach((cue, i) => {
     const text = normalized(cue.text);
+    // A pause alone is often part of the conversation. Require a nearby,
+    // first-person equipment failure too, and keep the restart for review.
+    if (
+      !anecdote.test(cue.text) &&
+      /待ってください|すみません|ごめんなさい/.test(text)
+    ) {
+      const nearby = cues
+        .slice(i, i + 4)
+        .filter((c) => c.start - cue.end <= 15);
+      const failure = nearby.find(
+        (c) =>
+          !anecdote.test(c.text) &&
+          /(?:パソコン|PC|マイク|接続).{0,12}(?:落ち|切れ|止ま|抜け|つながら)/i.test(
+            normalized(c.text),
+          ),
+      );
+      const previous = result.at(-1);
+      if (
+        failure &&
+        !(previous?.reason === "収録中断の可能性" && previous.end >= cue.start)
+      ) {
+        result.push({
+          id: `interruption-${cue.start}-${failure.end}`,
+          start: cue.start,
+          end: failure.end,
+          kind: "retake",
+          reason: "収録中断の可能性",
+          detail:
+            "待機・謝罪と機器トラブルの発言が近くにあります。会話の一部かもしれません。再開位置を試聴し、必要な範囲だけ調整してください。",
+        });
+      }
+    }
     if (
       /(?:やり直します|やり直しましょう|撮り直します|取り直します|もう一回いきます|もう一度お願いします)/.test(
         text,

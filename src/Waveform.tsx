@@ -25,11 +25,25 @@ export const Waveform = memo(function Waveform({
     container = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = canvas.current!,
-      parent = container.current!;
+      parent = container.current!,
+      viewport = parent.closest<HTMLElement>(".timeline-scroll")!;
+    let frame = 0;
     const draw = () => {
-      const width = parent.clientWidth,
+      // Only allocate the visible part. A 32x canvas exceeded Chromium's
+      // dimension limit on real recordings and made the waveform disappear.
+      const fullWidth = parent.clientWidth,
+        left = Math.floor(
+          Math.max(
+            0,
+            Math.min(viewport.scrollLeft, fullWidth - viewport.clientWidth),
+          ),
+        ),
+        width = Math.min(viewport.clientWidth + 2, fullWidth - left),
         height = 94,
-        dpr = window.devicePixelRatio || 1;
+        dpr = Math.min(2, window.devicePixelRatio || 1);
+      if (width <= 0) return;
+      el.style.width = `${width}px`;
+      el.style.left = `${left}px`;
       el.width = width * dpr;
       el.height = height * dpr;
       const ctx = el.getContext("2d")!;
@@ -43,8 +57,9 @@ export const Waveform = memo(function Waveform({
       ctx.fillStyle = track.muted ? "#a6afbc" : track.color;
       const gain = 10 ** (track.gainDb / 20);
       for (let x = 0; x < width; x += 2) {
-        const from = ((x / width) * duration - track.offset) / 0.05,
-          to = (((x + 2) / width) * duration - track.offset) / 0.05;
+        const from =
+            (((left + x) / fullWidth) * duration - track.offset) / 0.05,
+          to = (((left + x + 2) / fullWidth) * duration - track.offset) / 0.05;
         let peak = 0;
         for (
           let i = Math.max(0, Math.floor(from));
@@ -56,10 +71,20 @@ export const Waveform = memo(function Waveform({
         if (h > 0) ctx.fillRect(x, (height - h) / 2, 1.5, Math.max(1, h));
       }
     };
+    const requestDraw = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(draw);
+    };
     draw();
-    const observer = new ResizeObserver(draw);
+    const observer = new ResizeObserver(requestDraw);
     observer.observe(parent);
-    return () => observer.disconnect();
+    observer.observe(viewport);
+    viewport.addEventListener("scroll", requestDraw, { passive: true });
+    return () => {
+      observer.disconnect();
+      viewport.removeEventListener("scroll", requestDraw);
+      cancelAnimationFrame(frame);
+    };
   }, [track, duration, zoom]);
   const at = (event: React.PointerEvent) =>
     Math.max(
