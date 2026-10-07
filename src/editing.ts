@@ -1,4 +1,23 @@
-import type { Range, Segment, Track, MusicClip, Placement } from "./types";
+import type { Cut, Range, Segment, Track, MusicClip, Placement } from "./types";
+
+export function applyCutRange(cuts: Cut[], cut: Cut, duration: number): Cut[] {
+  if (
+    !Number.isFinite(duration) ||
+    !Number.isFinite(cut.start) ||
+    !Number.isFinite(cut.end) ||
+    cut.start < 0 ||
+    cut.end > duration ||
+    cut.end - cut.start < 0.03 - 1e-9
+  )
+    throw new Error(
+      "カットの開始・終了を確認してください。長さは0.03秒以上にしてください。",
+    );
+  return cuts.some((c) => c.id === cut.id)
+    ? cuts.map((c) =>
+        c.id === cut.id ? { ...c, start: cut.start, end: cut.end } : c,
+      )
+    : [...cuts, { ...cut }];
+}
 
 export function normalizeCuts(cuts: Range[], duration: number): Range[] {
   if (!Number.isFinite(duration) || duration <= 0) return [];

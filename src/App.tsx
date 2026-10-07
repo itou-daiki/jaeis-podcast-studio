@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import type { Candidate, Cue, Cut, MusicClip, Range, Track } from "./types";
 import {
+  applyCutRange,
   buildPlacements,
   buildSegments,
   formatTime,
@@ -62,6 +63,7 @@ import { clearSpeakerHint, parseScript } from "./speakers";
 import { scriptJob } from "./script-jobs";
 import { CueSpeaker, ScriptPanel } from "./ScriptPanel";
 import { Waveform } from "./Waveform";
+import { CutEditor } from "./CutEditor";
 import { DeliveryPanel, NextStep, WorkflowNav, type Step } from "./Workflow";
 
 const draftKey = "jaeis-podcast-studio:draft:v1";
@@ -78,6 +80,11 @@ function loadDraft(): { project?: Project; error?: string } {
 }
 
 const emptyRange = { start: 0, end: 0 };
+const pausePresets = [
+  { id: "relaxed", name: "ゆったり", minimum: 2.5, keep: 1.2 },
+  { id: "natural", name: "自然", minimum: 2, keep: 0.8 },
+  { id: "brisk", name: "テンポよく", minimum: 1.5, keep: 0.5 },
+];
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 const safeName = (name: string) =>
@@ -100,6 +107,7 @@ export default function App() {
   const [history, setHistory] = useState<Cut[][]>([[]]),
     [historyIndex, setHistoryIndex] = useState(0);
   const cuts = history[historyIndex];
+  const [editingCutId, setEditingCutId] = useState<string | null>(null);
   const [selection, setSelection] = useState<Range>(emptyRange),
     [playhead, setPlayhead] = useState(0);
   const [zoom, setZoom] = useState(1),
@@ -129,8 +137,13 @@ export default function App() {
     ],
     [parsedScript, cues],
   );
-  const [threshold, setThreshold] = useState(-45),
-    [pauseLength, setPauseLength] = useState(2);
+  const [threshold, setThreshold] = useState<number | null>(null);
+  const [pauseLength, setPauseLength] = useState(2),
+    [keepSeconds, setKeepSeconds] = useState(0.8);
+  const pausePreset =
+    pausePresets.find(
+      (p) => p.minimum === pauseLength && p.keep === keepSeconds,
+    )?.id ?? "custom";
   const [format, setFormat] = useState<"wav" | "mp3">("mp3"),
     [normalize, setNormalize] = useState(true);
   const [help, setHelp] = useState(false),
@@ -163,6 +176,9 @@ export default function App() {
   const remaining = candidates.filter(
     (c) => !dismissed.includes(c.id) && !cuts.some((k) => k.id === c.id),
   );
+  const editingCut =
+    cuts.find((c) => c.id === editingCutId) ??
+    remaining.find((c) => c.id === editingCutId);
   const shownCues = cues
     .map((cue, index) => ({ cue, index }))
     .filter(({ cue }) =>
@@ -263,6 +279,7 @@ export default function App() {
   const select = useCallback(
     (range: Range) => {
       stop();
+      setEditingCutId(null);
       setSelection(range);
     },
     [stop],
@@ -346,11 +363,41 @@ export default function App() {
   };
   const changeCuts = (next: Cut[]) => {
     stop();
+    setEditingCutId(null);
     setHistory((prev) =>
       [...prev.slice(0, historyIndex + 1), next].slice(-100),
     );
     setHistoryIndex(Math.min(99, historyIndex + 1));
   };
+  function beginCutEdit(cut: Cut) {
+    select({ start: cut.start, end: cut.end });
+    seek(cut.start);
+    setEditingCutId(cut.id);
+  }
+  function fineTunedCuts() {
+    if (!editingCut) return cuts;
+    return applyCutRange(
+      cuts,
+      { id: editingCut.id, reason: editingCut.reason, ...selection },
+      duration,
+    );
+  }
+  function applyFineCut() {
+    try {
+      changeCuts(fineTunedCuts());
+      setNotice(
+        "カット範囲を反映しました。履歴から何度でも微調整でき、「元に戻す」で変更前に戻せます。",
+      );
+    } catch (e) {
+      setError(message(e));
+    }
+  }
+  function resetCandidates() {
+    stop();
+    setCandidates([]);
+    setDismissed([]);
+    if (!cuts.some((c) => c.id === editingCutId)) setEditingCutId(null);
+  }
   const cutSelection = () => {
     if (selection.end - selection.start < 0.03) return;
     changeCuts([
@@ -361,6 +408,7 @@ export default function App() {
   };
   const updateTrack = (id: string, patch: Partial<Track>) => {
     stop();
+    setEditingCutId(null);
     setTracks((prev) =>
       prev.map((t) => (t.id === id ? { ...t, ...patch } : t)),
     );
@@ -429,7 +477,12 @@ export default function App() {
     });
   }
 
-  async function play(mode = edited, range?: Range, fromStart = false) {
+  async function play(
+    mode = edited,
+    range?: Range,
+    fromStart = false,
+    previewCuts?: Cut[],
+  ) {
     if (playing && !range && !fromStart) {
       stop();
       return;
@@ -439,7 +492,9 @@ export default function App() {
       const ctx = audioContext();
       await ctx.resume();
       const selectedPlan = mode
-        ? plan
+        ? previewCuts
+          ? buildPlacements(tracks, buildSegments(duration, previewCuts), music)
+          : plan
         : buildPlacements(tracks, buildSegments(duration, []), []);
       const begin = fromStart
         ? 0
@@ -520,10 +575,17 @@ export default function App() {
 
   function findCandidates() {
     stop();
+    setEditingCutId(null);
     setDismissed([]);
     setCandidates(
       [
-        ...silenceCandidates(tracks, duration, threshold, pauseLength),
+        ...silenceCandidates(
+          tracks,
+          duration,
+          threshold,
+          pauseLength,
+          keepSeconds,
+        ),
         ...detectRetakes(cues),
       ]
         .filter((c) => c.start >= 0 && c.end <= duration)
@@ -681,6 +743,7 @@ export default function App() {
     setScript(undefined);
     setHistory([[]]);
     setHistoryIndex(0);
+    setEditingCutId(null);
     setCandidates([]);
     setSelection(emptyRange);
     setTitle(project.title);
@@ -754,6 +817,7 @@ export default function App() {
       setTitle(project.title);
       setHistory([project.cuts]);
       setHistoryIndex(0);
+      setEditingCutId(null);
       setCandidates([]);
       setSelection(emptyRange);
       seek(0);
@@ -835,7 +899,7 @@ export default function App() {
             rel="noreferrer"
             className="version"
           >
-            v0.3
+            v0.4
           </a>
         </div>
       </header>
@@ -1061,6 +1125,7 @@ export default function App() {
                         onClick={() => {
                           stop();
                           setHistoryIndex((i) => i - 1);
+                          setEditingCutId(null);
                         }}
                       >
                         <Undo2 size={17} />
@@ -1072,6 +1137,7 @@ export default function App() {
                         onClick={() => {
                           stop();
                           setHistoryIndex((i) => i + 1);
+                          setEditingCutId(null);
                         }}
                       >
                         <Redo2 size={17} />
@@ -1216,90 +1282,131 @@ export default function App() {
                       </div>
                     </div>
                   </div>
-                  <div className="selection-bar">
-                    <Scissors size={16} />
-                    <label>
-                      開始{" "}
-                      <input
-                        aria-label="選択開始（秒）"
-                        type="number"
-                        min={0}
-                        max={duration}
-                        step={0.01}
-                        value={Number(selection.start.toFixed(2))}
-                        onChange={(e) => {
-                          const start = Math.max(
-                            0,
-                            Math.min(duration, Number(e.target.value)),
-                          );
-                          select({
-                            start,
-                            end: Math.max(start, selection.end),
-                          });
-                        }}
-                      />
-                      <span>秒</span>
-                    </label>
-                    <span>—</span>
-                    <label>
-                      終了{" "}
-                      <input
-                        aria-label="選択終了（秒）"
-                        type="number"
-                        min={selection.start}
-                        max={duration}
-                        step={0.01}
-                        value={Number(selection.end.toFixed(2))}
-                        onChange={(e) =>
-                          select({
-                            ...selection,
-                            end: Math.max(
-                              selection.start,
-                              Math.min(duration, Number(e.target.value)),
-                            ),
-                          })
-                        }
-                      />
-                      <span>秒</span>
-                    </label>
-                    <button
-                      className="cut-button"
-                      disabled={selection.end - selection.start < 0.03}
-                      onClick={cutSelection}
-                    >
-                      選択範囲をカット
-                    </button>
-                    <button
-                      className="icon-button"
-                      onClick={() => select(emptyRange)}
-                      aria-label="選択を解除"
-                    >
-                      <X size={15} />
-                    </button>
-                  </div>
-                  <div className="selection-preview">
-                    <span>
-                      {selection.end > selection.start
-                        ? `選択 ${formatTime(selection.start, true)}–${formatTime(selection.end, true)}`
-                        : "波形をドラッグして範囲を選択。クリックすると再生位置が移動します。"}
-                    </span>
-                    <button
-                      className="text-button"
-                      disabled={selection.end <= selection.start}
-                      onClick={() => void play(false, selection)}
-                    >
-                      <Play size={14} />
-                      カット前を聞く
-                    </button>
-                    <button
-                      className="text-button"
-                      disabled={selection.end <= selection.start}
-                      onClick={() => void play(true, selection)}
-                    >
-                      <Play size={14} />
-                      編集後を聞く
-                    </button>
-                  </div>
+                  {editingCut ? (
+                    <CutEditor
+                      cut={editingCut}
+                      draft={selection}
+                      tracks={tracks}
+                      duration={duration}
+                      existing={cuts.some((c) => c.id === editingCut.id)}
+                      overlap={cuts.some(
+                        (c) =>
+                          c.id !== editingCut.id &&
+                          c.start < selection.end &&
+                          c.end > selection.start,
+                      )}
+                      playing={playing}
+                      onChange={(range) => {
+                        stop();
+                        setSelection(range);
+                      }}
+                      onPreview={(mode) => {
+                        void play(
+                          mode,
+                          selection,
+                          false,
+                          mode ? fineTunedCuts() : undefined,
+                        );
+                      }}
+                      onStop={stop}
+                      onApply={applyFineCut}
+                      onCancel={() => {
+                        stop();
+                        setEditingCutId(null);
+                        setSelection({
+                          start: editingCut.start,
+                          end: editingCut.end,
+                        });
+                      }}
+                    />
+                  ) : (
+                    <>
+                      <div className="selection-bar">
+                        <Scissors size={16} />
+                        <label>
+                          開始{" "}
+                          <input
+                            aria-label="選択開始（秒）"
+                            type="number"
+                            min={0}
+                            max={duration}
+                            step={0.01}
+                            value={Number(selection.start.toFixed(2))}
+                            onChange={(e) => {
+                              const start = Math.max(
+                                0,
+                                Math.min(duration, Number(e.target.value)),
+                              );
+                              select({
+                                start,
+                                end: Math.max(start, selection.end),
+                              });
+                            }}
+                          />
+                          <span>秒</span>
+                        </label>
+                        <span>—</span>
+                        <label>
+                          終了{" "}
+                          <input
+                            aria-label="選択終了（秒）"
+                            type="number"
+                            min={selection.start}
+                            max={duration}
+                            step={0.01}
+                            value={Number(selection.end.toFixed(2))}
+                            onChange={(e) =>
+                              select({
+                                ...selection,
+                                end: Math.max(
+                                  selection.start,
+                                  Math.min(duration, Number(e.target.value)),
+                                ),
+                              })
+                            }
+                          />
+                          <span>秒</span>
+                        </label>
+                        <button
+                          className="cut-button"
+                          disabled={selection.end - selection.start < 0.03}
+                          onClick={cutSelection}
+                        >
+                          選択範囲をカット
+                        </button>
+                        <button
+                          className="icon-button"
+                          onClick={() => select(emptyRange)}
+                          aria-label="選択を解除"
+                        >
+                          <X size={15} />
+                        </button>
+                      </div>
+                      <div className="selection-preview">
+                        <span>
+                          {selection.end > selection.start
+                            ? `選択 ${formatTime(selection.start, true)}–${formatTime(selection.end, true)}`
+                            : "波形をドラッグして範囲を選択。クリックすると再生位置が移動します。"}
+                        </span>
+                        <button
+                          className="text-button"
+                          disabled={selection.end <= selection.start}
+                          onClick={() => void play(false, selection)}
+                        >
+                          <Play size={14} />
+                          カット前を聞く
+                        </button>
+                        <button
+                          className="text-button"
+                          disabled={selection.end <= selection.start}
+                          onClick={() => void play(true, selection)}
+                        >
+                          <Play size={14} />
+                          編集後を聞く
+                        </button>
+                      </div>
+                    </>
+                  )}
                   {step === "sound" ? (
                     <div className="mix-section">
                       <div className="section-heading">
@@ -1400,6 +1507,12 @@ export default function App() {
                         </button>
                         <span>{c.reason}</span>
                         <button
+                          className="text-button"
+                          onClick={() => beginCutEdit(c)}
+                        >
+                          微調整
+                        </button>
+                        <button
                           className="icon-button"
                           onClick={() =>
                             changeCuts(cuts.filter((k) => k.id !== c.id))
@@ -1454,42 +1567,110 @@ export default function App() {
                       <span>{remaining.length}件</span>
                     </div>
                     <p className="hint">
-                      無音や言い直しを見つけます。
+                      長い間の中央を詰め、前後に余白を残します。
                       <br />
                       採用するまで、音声は残ります。
                     </p>
+                    <label className="pause-preset">
+                      間の残し方
+                      <select
+                        aria-label="間の残し方"
+                        value={pausePreset}
+                        onChange={(e) => {
+                          const preset = pausePresets.find(
+                            (p) => p.id === e.target.value,
+                          );
+                          if (!preset) return;
+                          resetCandidates();
+                          setPauseLength(preset.minimum);
+                          setKeepSeconds(preset.keep);
+                        }}
+                      >
+                        {pausePresets.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                        {pausePreset === "custom" ? (
+                          <option value="custom">カスタム</option>
+                        ) : null}
+                      </select>
+                    </label>
+                    <p className="hint compact">
+                      {pauseLength}秒以上の静かな間を、{keepSeconds}秒残します。
+                    </p>
                     <details className="advanced-settings">
-                      <summary>候補を探す条件</summary>
+                      <summary>検出条件を細かく設定</summary>
                       <div className="detection-settings">
                         <label>
                           静かな区間{" "}
                           <select
                             aria-label="無音検出のしきい値"
-                            value={threshold}
-                            onChange={(e) =>
-                              setThreshold(Number(e.target.value))
-                            }
+                            value={threshold ?? "auto"}
+                            onChange={(e) => {
+                              resetCandidates();
+                              setThreshold(
+                                e.target.value === "auto"
+                                  ? null
+                                  : Number(e.target.value),
+                              );
+                            }}
                           >
+                            <option value="auto">
+                              自動（慎重に判定・推奨）
+                            </option>
+                            <option value={-55}>
+                              −55 dB（ごく静かな区間）
+                            </option>
                             <option value={-50}>−50 dB（慎重）</option>
-                            <option value={-45}>−45 dB（標準）</option>
-                            <option value={-35}>−35 dB</option>
+                            <option value={-45}>−45 dB</option>
+                            <option value={-35}>−35 dB（小声に注意）</option>
                           </select>
                         </label>
                         <label>
-                          長さ{" "}
-                          <select
+                          探す間の長さ（秒以上）{" "}
+                          <input
+                            type="number"
+                            min={0.5}
+                            max={10}
+                            step={0.1}
                             aria-label="無音検出の長さ"
                             value={pauseLength}
-                            onChange={(e) =>
-                              setPauseLength(Number(e.target.value))
-                            }
-                          >
-                            <option value={2}>2秒以上</option>
-                            <option value={3}>3秒以上</option>
-                            <option value={5}>5秒以上</option>
-                          </select>
+                            onChange={(e) => {
+                              const value = e.target.valueAsNumber;
+                              if (Number.isFinite(value)) {
+                                resetCandidates();
+                                setPauseLength(
+                                  Math.max(0.5, Math.min(10, value)),
+                                );
+                              }
+                            }}
+                          />
+                        </label>
+                        <label>
+                          残す間の合計（秒）
+                          <input
+                            type="number"
+                            min={0.3}
+                            max={3}
+                            step={0.05}
+                            aria-label="残す間の長さ"
+                            value={keepSeconds}
+                            onChange={(e) => {
+                              const value = e.target.valueAsNumber;
+                              if (Number.isFinite(value)) {
+                                resetCandidates();
+                                setKeepSeconds(
+                                  Math.max(0.3, Math.min(3, value)),
+                                );
+                              }
+                            }}
+                          />
                         </label>
                       </div>
+                      <p className="hint compact">
+                        小声・息継ぎの判別は完全ではありません。採用前につなぎ目を試聴してください。条件の変更は、採用済みのカットには影響しません。
+                      </p>
                     </details>
                     <button
                       className="primary full"
@@ -1529,12 +1710,7 @@ export default function App() {
                                 <Play size={13} />
                                 前後を聞く
                               </button>
-                              <button
-                                onClick={() => {
-                                  select(c);
-                                  seek(c.start);
-                                }}
-                              >
+                              <button onClick={() => beginCutEdit(c)}>
                                 <Scissors size={13} />
                                 範囲を調整
                               </button>
@@ -1550,7 +1726,7 @@ export default function App() {
                                     },
                                   ]);
                                   setNotice(
-                                    "カットしました。波形の下の「編集後を聞く」で、つなぎ目を確認できます。",
+                                    "カットしました。履歴からつなぎ目を聞いたり、範囲を微調整したりできます。",
                                   );
                                   select(c);
                                 }}

@@ -68,40 +68,88 @@ export async function analyze(buffer: AudioBuffer) {
   return { peaks, rms };
 }
 
+function quietThreshold(track: Track) {
+  const levels = Array.from(track.rms)
+    .filter((x) => Number.isFinite(x) && x >= 0)
+    .sort((a, b) => a - b);
+  const floor =
+    20 *
+    Math.log10(Math.max(1e-6, levels[Math.floor(levels.length * 0.2)] ?? 0));
+  // A low percentile estimates room tone. Never lift the automatic threshold
+  // into normal speech levels, even if the recording has no quiet background.
+  return 10 ** (Math.max(-60, Math.min(-42, floor + 6)) / 20);
+}
+
 export function silenceCandidates(
   tracks: Track[],
   duration: number,
-  thresholdDb = -45,
+  thresholdDb: number | null = null,
   minSeconds = 2,
+  keepSeconds = 0.8,
 ): Candidate[] {
+  if (!Number.isFinite(duration) || duration <= 0) return [];
+  if (
+    (thresholdDb !== null &&
+      (!Number.isFinite(thresholdDb) ||
+        thresholdDb < -80 ||
+        thresholdDb > -20)) ||
+    !Number.isFinite(minSeconds) ||
+    minSeconds < 0.5 ||
+    !Number.isFinite(keepSeconds) ||
+    keepSeconds < 0.3
+  )
+    throw new Error(
+      "無音判定の条件を確認してください。残す間は0.3秒以上にしてください。",
+    );
   const active = tracks.filter((t) => !t.muted);
   if (!active.length) return [];
   const result: Candidate[] = [];
-  const threshold = 10 ** (thresholdDb / 20);
+  const thresholds = active.map((track) =>
+    thresholdDb === null ? quietThreshold(track) : 10 ** (thresholdDb / 20),
+  );
   let start: number | null = null;
   const flush = (end: number) => {
-    if (start !== null && end - start >= minSeconds) {
-      // Keep 250 ms on both sides; never remove the entire pause.
+    if (
+      start !== null &&
+      end - start >= minSeconds &&
+      end - start - keepSeconds >= 0.1
+    ) {
+      // Shorten only the middle. Both voice boundaries retain some room.
       result.push({
         id: `silence-${start.toFixed(2)}-${end.toFixed(2)}`,
-        start: start + 0.25,
-        end: end - 0.25,
+        start: Number((start + keepSeconds / 2).toFixed(3)),
+        end: Number((end - keepSeconds / 2).toFixed(3)),
         kind: "silence",
         reason: "長い静かな区間",
-        detail: `全ての有効な声トラックが ${thresholdDb} dBFS 未満です。小声・息継ぎも含み得るため、試聴して判断してください。`,
+        detail: `静かな間 ${Number((end - start).toFixed(2))}秒 → ${keepSeconds}秒。前後を残して中央を詰めます。小声・息継ぎがないか試聴してください。`,
       });
     }
     start = null;
   };
   for (let i = 0; i < Math.ceil(duration / 0.05); i++) {
     const t = i * 0.05;
-    const quiet = active.every((track) => {
-      const index = Math.floor((t - track.offset) / 0.05);
-      return (
-        index < 0 ||
-        index >= track.rms.length ||
-        track.rms[index] * 10 ** (track.gainDb / 20) < threshold
+    const quiet = active.every((track, index) => {
+      // Check every overlapping analysis block, including fractional offsets.
+      // Mixer gain must not turn a recorded voice into a silence candidate.
+      const first = Math.max(0, Math.floor((t - track.offset) / 0.05 + 1e-9));
+      const last = Math.min(
+        track.rms.length - 1,
+        Math.ceil((Math.min(duration, t + 0.05) - track.offset) / 0.05 - 1e-9) -
+          1,
       );
+      const threshold = thresholds[index];
+      for (let b = first; b <= last; b++) {
+        const rms = track.rms[b],
+          peak = track.peaks?.[b] ?? rms;
+        if (
+          !Number.isFinite(rms) ||
+          !Number.isFinite(peak) ||
+          rms >= threshold ||
+          peak >= threshold * 2
+        )
+          return false;
+      }
+      return true;
     });
     if (quiet && start === null) start = t;
     if (!quiet) flush(t);

@@ -7,6 +7,7 @@ import {
   sourceToOutput,
 } from "../src/editing";
 import type { MusicClip, Track } from "../src/types";
+import fc from "fast-check";
 
 test("a pause is only proposed if every unmuted speaker is quiet", () => {
   const quiet = {
@@ -19,8 +20,105 @@ test("a pause is only proposed if every unmuted speaker is quiet", () => {
   expect(silenceCandidates([quiet, speaking], 5)).toEqual([]);
   expect(
     silenceCandidates([quiet, { ...speaking, muted: true }], 5),
-  ).toMatchObject([{ start: 0.25, end: 4.75 }]);
+  ).toMatchObject([{ start: 0.4, end: 4.6 }]);
   expect(silenceCandidates([{ ...quiet, muted: true }], 5)).toEqual([]);
+});
+
+test("silence shortening keeps an adjustable pause and leaves short breaths alone", () => {
+  const rms = new Float32Array(160).fill(0.1);
+  rms.fill(0, 20, 100); // four-second pause, from 1s to 5s
+  rms.fill(0, 120, 132); // a brief breath, not a cut
+  const track = {
+    rms,
+    peaks: rms.slice(),
+    muted: false,
+    gainDb: 0,
+    offset: 0,
+  } as Track;
+  expect(silenceCandidates([track], 8)).toMatchObject([
+    { start: 1.4, end: 4.6 },
+  ]);
+  expect(silenceCandidates([track], 8, -45, 2, 1.2)).toMatchObject([
+    { start: 1.6, end: 4.4 },
+  ]);
+});
+
+test("quiet utterances and short transients are protected before mixer gain", () => {
+  const rms = new Float32Array(100).fill(0.01);
+  const track = {
+    rms,
+    peaks: rms.slice(),
+    offset: 0,
+    gainDb: -24,
+    muted: false,
+  } as Track;
+  expect(silenceCandidates([track], 5, -45)).toEqual([]);
+  const lowRms = new Float32Array(100).fill(0.001);
+  const peaks = new Float32Array(100).fill(0.001);
+  peaks[50] = 0.1; // a short sound hidden by the 50ms average
+  const result = silenceCandidates([{ ...track, rms: lowRms, peaks }], 5, -45);
+  expect(result).toHaveLength(2);
+  expect(result.every((c) => c.end < 2.5 || c.start > 2.55)).toBe(true);
+});
+
+test("automatic detection adapts conservatively to a quiet background", () => {
+  const rms = new Float32Array(120).fill(0.0008); // about -62dBFS background
+  rms.fill(0.003, 50, 70); // about -50dBFS quiet voice
+  const track = {
+    rms,
+    peaks: rms.slice(),
+    offset: 0,
+    gainDb: 0,
+    muted: false,
+  } as Track;
+  const result = silenceCandidates([track], 6, null);
+  expect(result).toHaveLength(2);
+  expect(result.every((c) => c.end < 2.5 || c.start > 3.5)).toBe(true);
+  // No false claim of silence for steady speech or noisy room tone.
+  expect(
+    silenceCandidates(
+      [{ ...track, rms: new Float32Array(120).fill(0.02) }],
+      6,
+      null,
+    ),
+  ).toEqual([]);
+});
+
+test("cuts never cross an audible source block even with sub-frame track offsets", () => {
+  fc.assert(
+    fc.property(
+      fc.integer({ min: -49, max: 49 }),
+      fc.integer({ min: 30, max: 100 }),
+      (offsetMs, index) => {
+        const rms = new Float32Array(160);
+        rms[index] = 0.03;
+        const offset = offsetMs / 1000;
+        const track = {
+          rms,
+          peaks: rms.slice(),
+          offset,
+          gainDb: -24,
+          muted: false,
+        } as Track;
+        const candidates = silenceCandidates([track], 8, -45, 0.5, 0.3);
+        const voice = {
+          start: offset + index * 0.05,
+          end: offset + (index + 1) * 0.05,
+        };
+        expect(candidates.length).toBeGreaterThan(0);
+        for (const c of candidates) {
+          expect(c.start).toBeGreaterThanOrEqual(0);
+          expect(c.end).toBeLessThanOrEqual(8);
+          expect(c.end).toBeGreaterThan(c.start);
+          expect(c.end <= voice.start || c.start >= voice.end).toBe(true);
+        }
+        expect(
+          silenceCandidates([{ ...track, gainDb: 12 }], 8, -45, 0.5, 0.3),
+        ).toEqual(candidates);
+      },
+    ),
+    { numRuns: 150 },
+  );
 });
 
 test("jingle insertion shifts all voices together without consuming source audio", () => {
