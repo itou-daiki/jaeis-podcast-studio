@@ -587,6 +587,8 @@ textarea {
 .editor-toolbar {
   padding: 13px 16px;
   display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
   align-items: center;
   justify-content: space-between;
   border-bottom: 1px solid var(--line);
@@ -599,18 +601,27 @@ textarea {
   display: flex;
   align-items: center;
   gap: 3px;
+  margin-left: auto;
 }
-.zoom-label {
+.zoom-controls {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 4px;
   font-size: 10px;
   color: var(--muted);
   margin-left: 10px;
 }
-.zoom-label select {
+.zoom-controls select {
   font-size: 10px;
   padding: 5px;
+  min-height: 36px;
+}
+.zoom-controls .icon-button {
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--line);
+  color: var(--blue);
+  background: var(--surface);
 }
 .dropzone {
   min-height: 394px;

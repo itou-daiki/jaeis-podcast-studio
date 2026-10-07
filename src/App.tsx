@@ -11,6 +11,7 @@ import {
   Download,
   ShieldCheck,
   Plus,
+  Minus,
   X,
   FileText,
   WandSparkles,
@@ -899,7 +900,7 @@ export default function App() {
             rel="noreferrer"
             className="version"
           >
-            v0.4
+            v0.4.1
           </a>
         </div>
       </header>
@@ -1142,8 +1143,24 @@ export default function App() {
                       >
                         <Redo2 size={17} />
                       </button>
-                      <label className="zoom-label">
-                        拡大
+                      <div
+                        className="zoom-controls"
+                        role="group"
+                        aria-label="タイムラインの拡大・縮小"
+                      >
+                        <span>拡大</span>
+                        <button
+                          type="button"
+                          className="icon-button"
+                          aria-label="タイムラインを縮小"
+                          title="縮小"
+                          disabled={zoom <= 1}
+                          onClick={() =>
+                            setZoom((current) => Math.max(1, current / 2))
+                          }
+                        >
+                          <Minus size={17} />
+                        </button>
                         <select
                           aria-label="波形の拡大率"
                           value={zoom}
@@ -1156,7 +1173,19 @@ export default function App() {
                           <option value={16}>16倍</option>
                           <option value={32}>32倍</option>
                         </select>
-                      </label>
+                        <button
+                          type="button"
+                          className="icon-button"
+                          aria-label="タイムラインを拡大"
+                          title="拡大"
+                          disabled={zoom >= 32}
+                          onClick={() =>
+                            setZoom((current) => Math.min(32, current * 2))
+                          }
+                        >
+                          <Plus size={17} />
+                        </button>
+                      </div>
                     </div>
                   </div>
                   <div className="transport">
