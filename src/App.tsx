@@ -78,6 +78,10 @@ import { JinglePanel } from "./JinglePanel";
 import { placeScriptJingle } from "./jingles";
 import { hasVoiceEffects, originalVoice, type VoiceSettings } from "./voice";
 import { DeliveryPanel, NextStep, WorkflowNav, type Step } from "./Workflow";
+import { AutoEditPanel, type AutoEditOptions } from "./AutoEditPanel";
+import type { AutoEditResult } from "./auto-edit";
+import { runGeminiEdit } from "./gemini";
+import { renderExport } from "./export-audio";
 
 const draftKey = "jaeis-podcast-studio:draft:v1";
 function loadDraft(): { project?: Project; error?: string } {
@@ -126,6 +130,32 @@ export default function App() {
   const [tracks, setTracks] = useState<Track[]>([]),
     [music, setMusic] = useState<MusicClip[]>([]);
   const [jingleSource, setJingleSource] = useState<MusicClip>();
+  const autoAbort = useRef<AbortController | null>(null);
+  const [autoRunning, setAutoRunning] = useState(false);
+  const [autoResult, setAutoResult] = useState<AutoEditResult>();
+  const [autoBefore, setAutoBefore] = useState<{
+    sourceSignature: string;
+    history: Cut[][];
+    historyIndex: number;
+    music: MusicClip[];
+    cues: Cue[];
+    candidates: Candidate[];
+    dismissed: string[];
+    normalize: boolean;
+    format: "wav" | "mp3";
+  }>();
+  const sourceSignature = JSON.stringify(
+    tracks.map((t) => [t.id, t.buffer.length, t.offset]),
+  );
+  const canUndoAuto =
+    !!autoBefore && autoBefore.sourceSignature === sourceSignature;
+  useEffect(() => {
+    // Release old music buffers when source timing changes; gain changes do not invalidate undo.
+    if (autoBefore && autoBefore.sourceSignature !== sourceSignature) {
+      setAutoBefore(undefined);
+      setAutoResult(undefined);
+    }
+  }, [sourceSignature, autoBefore]);
   const [history, setHistory] = useState<Cut[][]>([[]]),
     [historyIndex, setHistoryIndex] = useState(0);
   const cuts = history[historyIndex];
@@ -355,6 +385,7 @@ export default function App() {
       });
       asr.current?.terminate();
       voiceAbort.current?.abort();
+      autoAbort.current?.abort();
     },
     [],
   );
@@ -998,28 +1029,157 @@ export default function App() {
     }
   }
 
+  async function autoEdit(options: AutoEditOptions) {
+    if (autoAbort.current || busy) return;
+    const controller = new AbortController();
+    autoAbort.current = controller;
+    setAutoRunning(true);
+    await run(async () => {
+      try {
+        if (
+          !tracks.some((track) => !track.muted) ||
+          !duration ||
+          duration > 2700
+        )
+          throw new Error(
+            "ミュートしていない収録音声が必要です。AI編集は45分まで対応しています。",
+          );
+        const signal = controller.signal;
+        const quiet = silenceCandidates(
+          rawTracks(tracks),
+          duration,
+          null,
+          0.5,
+          0.3,
+        );
+        const silences = silenceCandidates(
+          rawTracks(tracks),
+          duration,
+          null,
+          2,
+          0.8,
+        );
+        const markers = await scriptJob({
+          type: "jingles",
+          text: script?.text ?? "",
+          cues: [],
+          duration,
+        });
+        signal.throwIfAborted();
+        const result = await runGeminiEdit({
+          ...options,
+          signal,
+          script: script?.text ?? "",
+          status: setBusy,
+          context: {
+            duration,
+            cues,
+            cuts,
+            music,
+            jingleSource,
+            quiet,
+            silences,
+            markers,
+          },
+          makeAudio: async (range, audioSignal) => {
+            audioSignal.throwIfAborted();
+            const chunk = buildPlacements(
+              rawTracks(tracks),
+              [{ ...range, outputStart: 0 }],
+              [],
+            );
+            const buffer = await render(
+              chunk.placements,
+              chunk.duration,
+              16000,
+              1,
+            );
+            audioSignal.throwIfAborted();
+            return encodeWav(buffer);
+          },
+        });
+        // Prepare output before committing: API, validation, cancellation and encoding failures leave the editor intact.
+        let output: Uint8Array<ArrayBuffer> | undefined;
+        if (options.exportMp3)
+          output = await renderExport(
+            buildPlacements(
+              tracks,
+              buildSegments(duration, result.cuts),
+              result.music,
+            ),
+            "mp3",
+            true,
+            setBusy,
+            signal,
+          );
+        signal.throwIfAborted();
+        if (output)
+          download(output, `${safeName(title)}-AI編集.mp3`, "audio/mpeg");
+        setAutoBefore({
+          sourceSignature,
+          history,
+          historyIndex,
+          music,
+          cues,
+          candidates,
+          dismissed,
+          normalize,
+          format,
+        });
+        changeCuts(result.cuts);
+        setMusic(result.music);
+        setCues(result.cues);
+        setCandidates([]);
+        setDismissed([]);
+        setNormalize(true);
+        setFormat("mp3");
+        setAutoResult(result);
+        setSelection(emptyRange);
+        seek(0);
+        setStep(options.exportMp3 ? "export" : "edit");
+        setNotice(
+          options.exportMp3
+            ? "AI編集を反映し、MP3を書き出しました。公開前にカット前後を試聴してください。"
+            : "AI編集を反映しました。カット前後を試聴し、必要な箇所だけ微調整してください。",
+        );
+      } finally {
+        autoAbort.current = null;
+        setAutoRunning(false);
+      }
+    });
+  }
+
+  function undoAutoEdit() {
+    if (
+      !canUndoAuto ||
+      !autoBefore ||
+      !window.confirm(
+        "直近のAI編集前に戻します。AI編集後に手動で変更したカット・字幕・音楽も戻ります。書き出したファイルは削除しません。よろしいですか？",
+      )
+    )
+      return;
+    stop();
+    setHistory(autoBefore.history);
+    setHistoryIndex(autoBefore.historyIndex);
+    setMusic(autoBefore.music);
+    setCues(autoBefore.cues);
+    setCandidates(autoBefore.candidates);
+    setDismissed(autoBefore.dismissed);
+    setNormalize(autoBefore.normalize);
+    setFormat(autoBefore.format);
+    setAutoResult(undefined);
+    setAutoBefore(undefined);
+    setEditingCutId(null);
+    setSelection(emptyRange);
+    seek(0);
+    setNotice(
+      "AI編集前のカット・字幕・音楽に戻しました。元の音声と書き出したファイルはそのままです。",
+    );
+  }
+
   async function exportAudio() {
     await run(async () => {
-      setBusy("カットと音楽を反映しています…");
-      const buffer = await render(plan.placements, plan.duration);
-      // Reduce peaks only when necessary before PCM conversion; prevent wrap/clipping.
-      let peak = 0;
-      for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
-        const samples = buffer.getChannelData(ch);
-        for (let i = 0; i < samples.length; i++)
-          peak = Math.max(peak, Math.abs(samples[i]));
-      }
-      if (peak > 0.98)
-        for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
-          const samples = buffer.getChannelData(ch);
-          for (let i = 0; i < samples.length; i++) samples[i] *= 0.98 / peak;
-        }
-      setBusy("WAVデータを作成しています…");
-      let bytes = await encodeWav(buffer);
-      if (format === "mp3" || normalize) {
-        const { convertMedia } = await import("./conversion");
-        bytes = await convertMedia(bytes, format, normalize, setBusy);
-      }
+      const bytes = await renderExport(plan, format, normalize, setBusy);
       download(
         bytes,
         `${safeName(title)}.${format}`,
@@ -1052,7 +1212,7 @@ export default function App() {
         <div className="top-actions">
           <span className="privacy">
             <ShieldCheck size={15} />
-            音声は端末内で処理
+            通常は端末内処理 · Geminiは外部送信
           </span>
           <button
             className="icon-button"
@@ -1067,7 +1227,7 @@ export default function App() {
             rel="noreferrer"
             className="version"
           >
-            v0.6.0
+            v0.7.0
           </a>
         </div>
       </header>
@@ -1091,7 +1251,7 @@ export default function App() {
                   ? tracks.some((t) => t.id === "demo")
                     ? "操作デモは自動保存されません"
                     : saveStatus
-                  : "音声は外部に送信されません。元ファイルも変更しません。"}
+                  : "通常の編集は端末内で処理します。Geminiは同意したときだけ外部へ送信。元ファイルは変更しません。"}
               </p>
             </div>
             <div className="project-actions">
@@ -1117,6 +1277,23 @@ export default function App() {
             hasAudio={!!tracks.length && !pendingProject}
             onChange={setStep}
           />
+          {tracks.length > 0 && !pendingProject ? (
+            <AutoEditPanel
+              duration={duration}
+              hasTranscript={cues.length > 0}
+              hasScript={!!script?.text.trim()}
+              hasMusic={music.length > 0 || !!jingleSource}
+              disabled={!!busy || !tracks.some((t) => !t.muted)}
+              result={canUndoAuto ? autoResult : undefined}
+              canUndo={canUndoAuto}
+              onRun={autoEdit}
+              onUndo={undoAutoEdit}
+              onSetup={(target) => {
+                setStep(target);
+                if (target === "edit") setTab("transcript");
+              }}
+            />
+          ) : null}
           {initialDraft.project && !tracks.length && !pendingProject ? (
             <section className="resume-banner" aria-label="前回の編集">
               <div>
@@ -2558,6 +2735,18 @@ export default function App() {
         <div className="busy-banner" role="status">
           <LoaderCircle className="spin" size={20} />
           <span>{busy}</span>
+          {autoRunning ? (
+            <button
+              onClick={() => {
+                autoAbort.current?.abort();
+                setNotice(
+                  "AI編集を中止しました。送信済みの処理には料金が発生する場合があります。編集内容は変更していません。",
+                );
+              }}
+            >
+              AI編集を中止
+            </button>
+          ) : null}
           {asrRunning ? (
             <button onClick={() => abortAsr.current?.()}>
               文字起こしを中止
@@ -2606,7 +2795,7 @@ export default function App() {
                 「不要な部分をカット」の「文字起こし」で、Whisperで文字起こしするか、字幕を読み込みます。Wordやテキストの原稿があれば、話者候補を探せます。原稿は任意です。
               </li>
               <li>
-                候補は必ず試聴して採用。誤認識や似た表現だけで会話を自動削除しません。
+                通常は候補を試聴して採用。Geminiモードでは、送信への同意後にAIがカット・ジングルを判断し、安全条件を満たす編集をまとめて反映します。曖昧な箇所は残します。
               </li>
               <li>
                 声の音量・ノイズを調整し、原音と聞き比べて全体に反映。音楽も追加できます。音声と編集内容の両方を保存してください。
@@ -2614,17 +2803,20 @@ export default function App() {
             </ol>
             <h3>保存とプライバシー</h3>
             <p>
-              音声・字幕・原稿はこの端末で処理します。モデル取得時のみHugging
+              通常モードでは音声・字幕・原稿をこの端末で処理します。モデル取得時にHugging
               Face等へ接続します。アプリへのアクセスはGitHub
               Pagesに記録され得ます。モデルはブラウザにキャッシュされる場合があります。
             </p>
             <p>
               編集内容・字幕・原稿・話者の確認結果はこのブラウザに自動保存します（音声本体・操作デモは含みません）。再開時は同じ元音声を選び直してください。共有PCでは他の利用者も内容を参照できる場合があります。「編集を保存」でファイルにも保管してください。
             </p>
+            <p>
+              Geminiモードでは、同意した音声・字幕・原稿・編集時刻をGoogleへ送信します。API利用料とGoogleのデータ取り扱い条件が適用されます。キーはタブのメモリにのみ置き、処理後に消去します。APIの会話履歴保存は無効にしていますが、Google側の安全監視等の保持をなくすものではありません。
+            </p>
             <h3>現在の制限</h3>
             <p>
               PCのChrome /
-              Edgeを推奨。長時間・多トラックはメモリを多く使います。声による話者識別、音楽の重ね合わせ、自動要約は未対応です。原稿との照合は似た言葉を手がかりにした候補で、大きな言い換えや原稿にない発言は推定できません。SmallはBaseより重く、精度が必ず上がるとは限りません。専門用語や人名は確認してください。
+              Edgeを推奨。長時間・多トラックはメモリを多く使います。声による本人確認、音楽の重ね合わせは未対応です。通常の原稿照合は似た言葉を手がかりにした候補です。Geminiの話者・時刻・編集にも誤りがあり得ます。フルオート編集後も公開前の試聴は必要です。専門用語や人名は確認してください。
             </p>
             <p>
               <a

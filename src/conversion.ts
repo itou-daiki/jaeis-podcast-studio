@@ -6,8 +6,12 @@ export async function convertMedia(
   mode: "extract" | "wav" | "mp3",
   normalize: boolean,
   status: (value: string) => void,
+  signal?: AbortSignal,
 ): Promise<Uint8Array<ArrayBuffer>> {
+  signal?.throwIfAborted();
   const ffmpeg = new FFmpeg();
+  const abort = () => ffmpeg.terminate();
+  signal?.addEventListener("abort", abort, { once: true });
   ffmpeg.on("progress", ({ progress }) =>
     status(
       `音声を${mode === "extract" ? "取り出し" : "書き出し"}中… ${Math.min(99, Math.max(0, Math.round(progress * 100)))}%`,
@@ -47,10 +51,15 @@ export async function convertMedia(
         "音声変換に失敗しました。ファイル形式・サイズを確認してください。",
       );
     const result = await ffmpeg.readFile(output);
+    signal?.throwIfAborted();
     if (typeof result === "string")
       throw new Error("音声データを取得できませんでした。");
     return new Uint8Array(result);
+  } catch (error) {
+    signal?.throwIfAborted();
+    throw error;
   } finally {
+    signal?.removeEventListener("abort", abort);
     ffmpeg.terminate();
   }
 }

@@ -7,6 +7,29 @@ import {
 } from "../src/project";
 import fc from "fast-check";
 
+test("session credentials and unrelated runtime settings never enter saved projects", () => {
+  const project = {
+    version: 1 as const,
+    title: "公開可能なテスト",
+    tracks: [],
+    cuts: [],
+    cues: [],
+    music: [],
+    apiKey: "test-secret",
+    gemini: { key: "test-secret" },
+    undo: { key: "test-secret" },
+  };
+  expect(saveProject(project)).not.toContain("test-secret");
+  expect(readProject(saveProject(project))).toEqual({
+    version: 1,
+    title: project.title,
+    tracks: [],
+    cuts: [],
+    cues: [],
+    music: [],
+  });
+});
+
 test("script jingle positions roundtrip and reused audio needs only one source on resume", () => {
   const project = {
     version: 1 as const,

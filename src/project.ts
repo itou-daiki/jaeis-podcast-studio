@@ -33,7 +33,20 @@ export type Project = {
   script?: SavedScript;
 };
 export const saveProject = (project: Project) =>
-  JSON.stringify(project, null, 2);
+  // Keep session-only settings (especially credentials and undo buffers) out of persistence.
+  JSON.stringify(
+    {
+      version: project.version,
+      title: project.title,
+      cuts: project.cuts,
+      cues: project.cues,
+      tracks: project.tracks,
+      music: project.music,
+      ...(project.script ? { script: project.script } : {}),
+    },
+    null,
+    2,
+  );
 
 // Legacy clips consume distinct files; explicit shared assets reuse one decode.
 export function musicSourceIndices(
