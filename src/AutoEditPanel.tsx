@@ -100,7 +100,7 @@ export function AutoEditPanel({
             </button>
           </div>
           <p className="hint">
-            ジングルは原稿の指定位置に配置します。音源や原稿の指定がなければ追加しません。OP・EDは「音を整える」で用途を設定してください。
+            ジングルは原稿の指定位置に配置します。「音量・音楽を整える」の内蔵音源ならアップロード不要です。「原稿に合わせて使う」で準備してください。OP・ED・BGMも同じ工程で選べます。音源や原稿の指定がなければジングルは追加しません。
           </p>
           {apiKeyGuide}
           <div className="auto-key-row">

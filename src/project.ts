@@ -1,7 +1,8 @@
-import type { Cut, Cue } from "./types";
+import type { Cut, Cue, MusicClip } from "./types";
 import { validateCues } from "./transcript";
 import { MAX_SCRIPT_LENGTH } from "./speakers";
 import { isVoiceSettings, type VoiceSettings } from "./voice";
+import { findBuiltInMusic } from "./music-catalog";
 
 export type SavedScript = { text: string; name?: string };
 
@@ -14,14 +15,15 @@ type SavedTrack = {
   muted: boolean;
   voice?: VoiceSettings;
 };
-type SavedMusic = {
+export type SavedMusic = {
   name: string;
   duration: number;
-  role: "opening" | "ending" | "jingle";
+  role: MusicClip["role"];
   at: number;
   gainDb: number;
   assetId?: string;
   scriptJingleKey?: string;
+  builtinId?: string;
 };
 export type Project = {
   version: 1;
@@ -56,6 +58,7 @@ export function musicSourceIndices(
   const used = new Set<number>();
   const shared = new Map<string, number>();
   return saved.map((s) => {
+    if (s.builtinId) return -1; // Resolved by the built-in library, not uploads.
     if (s.assetId && shared.has(s.assetId)) return shared.get(s.assetId)!;
     const index = loaded.findIndex(
       (m, i) =>
@@ -93,6 +96,7 @@ export function missingSources(
       .map((s) => s.name),
     music: project.music
       .filter((s, i) => {
+        if (findBuiltInMusic(s.builtinId)) return false;
         if (indices[i] >= 0 || (s.assetId && missingAssets.has(s.assetId)))
           return false;
         if (s.assetId) missingAssets.add(s.assetId);
@@ -143,10 +147,14 @@ export function readProject(text: string): Project {
     if (
       !m ||
       typeof m.name !== "string" ||
-      !["opening", "ending", "jingle"].includes(m.role) ||
+      !["opening", "ending", "jingle", "bgm"].includes(m.role) ||
       !finite(m.duration, 0, 2700) ||
       !finite(m.at, 0, 86400) ||
       !finite(m.gainDb, -60, 12) ||
+      (m.builtinId !== undefined &&
+        (!findBuiltInMusic(m.builtinId) ||
+          Math.abs(findBuiltInMusic(m.builtinId)!.seconds - m.duration) >
+            0.01)) ||
       (m.assetId !== undefined &&
         (typeof m.assetId !== "string" ||
           !m.assetId.length ||
@@ -157,13 +165,17 @@ export function readProject(text: string): Project {
           m.scriptJingleKey.length > 2000))
     )
       throw new Error("音楽の設定が正しくありません。");
+  if (p.music.filter((m: SavedMusic) => m.role === "bgm").length > 1)
+    throw new Error("BGMは1曲までです。");
   const assets = new Map<string, SavedMusic>();
   for (const m of p.music as SavedMusic[]) {
     if (!m.assetId) continue;
     const prior = assets.get(m.assetId);
     if (
       prior &&
-      (prior.name !== m.name || Math.abs(prior.duration - m.duration) >= 0.01)
+      (prior.name !== m.name ||
+        prior.builtinId !== m.builtinId ||
+        Math.abs(prior.duration - m.duration) >= 0.01)
     )
       throw new Error("共有する音楽素材の情報が一致しません。");
     assets.set(m.assetId, m);
@@ -202,7 +214,16 @@ export function readProject(text: string): Project {
           }
         : {}),
     })),
-    music: p.music,
+    music: p.music.map((m: SavedMusic) => ({
+      name: m.name,
+      duration: m.duration,
+      role: m.role,
+      at: m.at,
+      gainDb: m.gainDb,
+      ...(m.assetId ? { assetId: m.assetId } : {}),
+      ...(m.builtinId ? { builtinId: m.builtinId } : {}),
+      ...(m.scriptJingleKey ? { scriptJingleKey: m.scriptJingleKey } : {}),
+    })),
     cues: validateCues(p.cues),
     ...(p.script
       ? {

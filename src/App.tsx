@@ -62,7 +62,6 @@ import {
 } from "./transcript";
 import {
   missingSources,
-  musicSourceIndices,
   readProject,
   saveProject,
   type Project,
@@ -75,6 +74,8 @@ import { Waveform } from "./Waveform";
 import { CutEditor } from "./CutEditor";
 import { VoicePanel } from "./VoicePanel";
 import { JinglePanel } from "./JinglePanel";
+import { MusicLibrary } from "./MusicLibrary";
+import { loadBuiltInMusic, restoreMusic } from "./music-library";
 import { placeScriptJingle } from "./jingles";
 import { hasVoiceEffects, originalVoice, type VoiceSettings } from "./voice";
 import { DeliveryPanel, NextStep, WorkflowNav, type Step } from "./Workflow";
@@ -130,6 +131,7 @@ export default function App() {
   const [tracks, setTracks] = useState<Track[]>([]),
     [music, setMusic] = useState<MusicClip[]>([]);
   const [jingleSource, setJingleSource] = useState<MusicClip>();
+  const [musicPreview, setMusicPreview] = useState<string>();
   const autoAbort = useRef<AbortController | null>(null);
   const [autoRunning, setAutoRunning] = useState(false);
   const [autoResult, setAutoResult] = useState<AutoEditResult>();
@@ -285,7 +287,16 @@ export default function App() {
         }),
       ),
       music: music.map(
-        ({ name, buffer, role, at, gainDb, assetId, scriptJingleKey }) => ({
+        ({
+          name,
+          buffer,
+          role,
+          at,
+          gainDb,
+          assetId,
+          scriptJingleKey,
+          builtinId,
+        }) => ({
           name,
           duration: buffer.duration,
           role,
@@ -293,6 +304,7 @@ export default function App() {
           gainDb,
           ...(assetId ? { assetId } : {}),
           ...(scriptJingleKey ? { scriptJingleKey } : {}),
+          ...(builtinId ? { builtinId } : {}),
         }),
       ),
     }),
@@ -350,6 +362,7 @@ export default function App() {
     });
     sources.current = [];
     setPlaying(false);
+    setMusicPreview(undefined);
   }, []);
   const seek = useCallback(
     (time: number) => {
@@ -508,9 +521,81 @@ export default function App() {
     setCandidates([]);
   };
   const updateMusic = (id: string, patch: Partial<MusicClip>) => {
+    if (
+      patch.role === "bgm" &&
+      music.some((m) => m.id !== id && m.role === "bgm")
+    ) {
+      setError("BGMは1曲までです。今のBGMを外してから変更してください。");
+      return;
+    }
     stop();
     setMusic((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)));
   };
+
+  async function previewBuiltInMusic(id: string) {
+    if (musicPreview === id) {
+      stop();
+      return;
+    }
+    await run(async () => {
+      const ctx = audioContext();
+      await ctx.resume();
+      setBusy("内蔵音源を読み込んでいます…");
+      const clip = await loadBuiltInMusic(id);
+      const length = clip.buffer.duration;
+      sources.current = schedule(
+        ctx,
+        [
+          {
+            buffer: clip.buffer,
+            when: 0,
+            offset: 0,
+            duration: length,
+            gain: 10 ** (clip.gainDb / 20),
+            fade: 0.05,
+          },
+        ],
+        0,
+        length,
+        ctx.currentTime + 0.03,
+      );
+      const source = sources.current[0];
+      source.onended = () => {
+        if (sources.current.includes(source)) stop();
+      };
+      setMusicPreview(id);
+      setPlaying(true);
+    });
+  }
+
+  async function addBuiltInMusic(id: string, forScript = false) {
+    await run(async () => {
+      setBusy("内蔵音源を読み込んでいます…");
+      const clip = await loadBuiltInMusic(id);
+      if (forScript) {
+        setJingleSource(clip);
+        setNotice(
+          "原稿用にジングルを準備しました。下で位置を探すか、Geminiのフルオート編集で配置できます。まだ番組には挿入していません。",
+        );
+        return;
+      }
+      if (
+        clip.role !== "jingle" &&
+        music.some((m) => m.builtinId === id && m.role === clip.role)
+      )
+        return;
+      const keep =
+        clip.role === "bgm" ? music.filter((m) => m.role !== "bgm") : music;
+      if (keep.length >= 20) throw new Error("音楽は20本までです。");
+      setMusic([...keep, { ...clip, at: playheadRef.current }]);
+      setEdited(true);
+      setNotice(
+        clip.role === "bgm"
+          ? "BGMを会話の下に追加しました。OP・ED・ジングルの間は止まります。声と一緒に聞いて音量を調整してください。"
+          : `${clip.name}を${clip.role === "jingle" ? `元音声の${formatTime(playheadRef.current)}に` : ""}追加しました。`,
+      );
+    });
+  }
 
   async function adjustVoice(
     buffer: AudioBuffer,
@@ -970,14 +1055,6 @@ export default function App() {
         throw new Error(
           "先に保存時と同じ元音声を全て読み込んでください。ファイル名・サイズ・更新日時を照合します。",
         );
-      const musicIndices = musicSourceIndices(
-        project.music,
-        music.map((m) => ({ name: m.name, duration: m.buffer.duration })),
-      );
-      if (musicIndices.some((i) => i < 0))
-        throw new Error(
-          "保存時と同じOP・ED・ジングルも先に読み込んでください。",
-        );
       const restored = tracks.map((t) => ({
         ...t,
         ...project.tracks.find(
@@ -993,11 +1070,8 @@ export default function App() {
       );
       if (project.cuts.some((c) => c.end > length + 0.01))
         throw new Error("カット範囲が素材の長さを超えています。");
-      const restoredMusic = project.music.map((s, i) => ({
-        ...music[musicIndices[i]],
-        ...s,
-        id: crypto.randomUUID(),
-      }));
+      setBusy("音楽を復元しています（内蔵音源は自動で読み込みます）…");
+      const restoredMusic = await restoreMusic(project.music, music);
       let extraBytes = 0;
       for (const track of restored) {
         if (!track.voice || !hasVoiceEffects(track.voice)) continue;
@@ -1227,7 +1301,7 @@ export default function App() {
             rel="noreferrer"
             className="version"
           >
-            v0.7.1
+            v0.8.0
           </a>
         </div>
       </header>
@@ -2384,13 +2458,20 @@ export default function App() {
                 {step === "sound" ? (
                   <div className="inspector-content">
                     <div className="section-heading">
-                      <h2>OP・ED・ジングル</h2>
+                      <h2>音楽を加える</h2>
                     </div>
                     <p className="hint">
-                      使用許可のある音源を追加します。
-                      <br />
-                      OPとEDは前後に、ジングルは元音声の指定時刻に挿入します。
+                      OP・EDは番組の前後、ジングルは話題の間に。BGMは会話の下に小さく重ねます。
                     </p>
+                    <MusicLibrary
+                      music={music}
+                      pendingSource={jingleSource}
+                      previewing={musicPreview}
+                      onPreview={(id) => void previewBuiltInMusic(id)}
+                      onAdd={(id, forScript) =>
+                        void addBuiltInMusic(id, forScript)
+                      }
+                    />
                     <button
                       className="secondary full"
                       onClick={() => {
@@ -2399,7 +2480,7 @@ export default function App() {
                       }}
                     >
                       <Plus size={16} />
-                      音楽を追加
+                      手持ちの音楽ファイルを追加
                     </button>
                     <JinglePanel
                       text={script?.text ?? ""}
@@ -2419,6 +2500,8 @@ export default function App() {
                       }}
                       onPlace={(source, key, at) => {
                         try {
+                          if (jingleSource?.id === source && music.length >= 20)
+                            throw new Error("音楽は20本までです。");
                           const next = placeScriptJingle(
                             jingleSource?.id === source
                               ? [...music, jingleSource]
@@ -2445,6 +2528,9 @@ export default function App() {
                         void play(edited, { start: at, end: at })
                       }
                     />
+                    {music.length ? (
+                      <h3 className="placed-music-title">追加した音楽を調整</h3>
+                    ) : null}
                     {music.map((m, musicIndex) => (
                       <article className="music-card" key={m.id}>
                         <div className="section-heading">
@@ -2472,6 +2558,12 @@ export default function App() {
                             onChange={(e) =>
                               updateMusic(m.id, {
                                 role: e.target.value as MusicClip["role"],
+                                gainDb:
+                                  e.target.value === "bgm"
+                                    ? -26
+                                    : m.role === "bgm"
+                                      ? -12
+                                      : m.gainDb,
                                 scriptJingleKey: undefined,
                               })
                             }
@@ -2479,6 +2571,7 @@ export default function App() {
                             <option value="opening">オープニング</option>
                             <option value="ending">エンディング</option>
                             <option value="jingle">ジングル</option>
+                            <option value="bgm">BGM（会話に重ねる）</option>
                           </select>
                         </label>
                         {m.role === "jingle" ? (
@@ -2519,12 +2612,15 @@ export default function App() {
                           />
                         </label>
                         <small>
-                          {formatTime(m.buffer.duration)} · 前後を短くフェード
+                          {m.role === "bgm"
+                            ? `${formatTime(m.buffer.duration)}の音源を会話中に繰り返す · 前後をフェード`
+                            : `${formatTime(m.buffer.duration)} · 前後を短くフェード`}
+                          {m.builtinId ? " · 内蔵音源" : ""}
                         </small>
                       </article>
                     ))}
                     <div className="info-note">
-                      この版では音楽を会話に重ねず、間に挿入します。会話を邪魔しない音量を試聴して調整してください。
+                      BGMは1曲まで。会話部分で繰り返し、OP・ED・ジングル中は止まります。自動で声量を判断する機能ではないため、声が聞き取りやすい音量に調整してください。内蔵音源は次回の編集再開時も自動で読み込みます。
                     </div>
                   </div>
                 ) : null}
@@ -2678,7 +2774,7 @@ export default function App() {
                 const buffer = await decode(f, setBusy);
                 if (buffer.duration > 180)
                   throw new Error(
-                    "OP・ED・ジングルは3分以内の音源を選んでください。",
+                    "音楽は3分以内の音源を選んでください。BGMは会話の長さに合わせて繰り返します。",
                   );
                 if (
                   tracks.reduce((s, t) => s + trackBytes(t), 0) +
@@ -2816,7 +2912,7 @@ export default function App() {
             <h3>現在の制限</h3>
             <p>
               PCのChrome /
-              Edgeを推奨。長時間・多トラックはメモリを多く使います。声による本人確認、音楽の重ね合わせは未対応です。通常の原稿照合は似た言葉を手がかりにした候補です。Geminiの話者・時刻・編集にも誤りがあり得ます。フルオート編集後も公開前の試聴は必要です。専門用語や人名は確認してください。
+              Edgeを推奨。長時間・多トラックはメモリを多く使います。声による本人確認、声量に応じたBGMの自動調整は未対応です。通常の原稿照合は似た言葉を手がかりにした候補です。Geminiの話者・時刻・編集にも誤りがあり得ます。フルオート編集後も公開前の試聴は必要です。専門用語や人名は確認してください。
             </p>
             <p>
               <a

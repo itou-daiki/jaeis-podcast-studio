@@ -7,6 +7,58 @@ import {
 } from "../src/project";
 import fc from "fast-check";
 
+test("built-in jingles roundtrip without asking for an upload; unknown sources are rejected", () => {
+  const project = {
+    version: 1 as const,
+    title: "内蔵音源",
+    tracks: [],
+    cuts: [],
+    cues: [],
+    music: [5, 15].map((at) => ({
+      name: "JAEIS ジングル",
+      duration: 3.834354,
+      role: "jingle" as const,
+      at,
+      gainDb: -12,
+      builtinId: "jaeis-jingle-v1",
+      assetId: "builtin:jaeis-jingle-v1",
+    })),
+  };
+  const restored = readProject(saveProject(project));
+  expect(restored).toEqual(project);
+  expect(
+    readProject(
+      JSON.stringify({
+        ...project,
+        music: project.music.map((m) => ({
+          ...m,
+          buffer: {},
+          url: "https://example.com/override",
+        })),
+      }),
+    ),
+  ).toEqual(project);
+  expect(() =>
+    readProject(
+      JSON.stringify({
+        ...project,
+        music: [{ ...project.music[0], duration: 120 }],
+      }),
+    ),
+  ).toThrow();
+  expect(missingSources(restored, [], [])).toEqual({ voices: [], music: [] });
+  for (const builtinId of ["unknown", "https://example.com/private.wav", 1]) {
+    expect(() =>
+      readProject(
+        JSON.stringify({
+          ...project,
+          music: [{ ...project.music[0], builtinId }],
+        }),
+      ),
+    ).toThrow();
+  }
+});
+
 test("session credentials and unrelated runtime settings never enter saved projects", () => {
   const project = {
     version: 1 as const,

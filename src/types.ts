@@ -33,11 +33,12 @@ export type MusicClip = {
   id: string;
   name: string;
   buffer: AudioBuffer;
-  role: "opening" | "ending" | "jingle";
+  role: "opening" | "ending" | "jingle" | "bgm";
   at: number;
   gainDb: number;
   assetId?: string;
   scriptJingleKey?: string;
+  builtinId?: string;
 };
 export type Placement = {
   buffer: AudioBuffer;
@@ -46,4 +47,5 @@ export type Placement = {
   duration: number;
   gain: number;
   fade: number;
+  loop?: boolean;
 };

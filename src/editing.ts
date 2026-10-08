@@ -130,6 +130,30 @@ export function buildPlacements(
         });
     }
   }
+  // Background audio never advances the cursor or changes any voice placement.
+  // Join adjacent output segments so an ordinary cut doesn't restart the music.
+  const beds: Range[] = [];
+  for (const s of mapping) {
+    const start = s.outputStart,
+      end = start + s.end - s.start;
+    const last = beds.at(-1);
+    if (last && Math.abs(last.end - start) < 1e-6) last.end = end;
+    else beds.push({ start, end });
+  }
+  for (const bgm of music.filter(
+    (m) => m.role === "bgm" && m.buffer.duration > 0,
+  )) {
+    for (const bed of beds)
+      placements.push({
+        buffer: bgm.buffer,
+        when: bed.start,
+        offset: 0,
+        duration: bed.end - bed.start,
+        gain: 10 ** (bgm.gainDb / 20),
+        fade: 0.6,
+        loop: true,
+      });
+  }
   return { placements, mapping, duration: cursor };
 }
 

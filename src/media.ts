@@ -173,6 +173,7 @@ export function schedule(
     const source = ctx.createBufferSource(),
       gain = ctx.createGain();
     source.buffer = p.buffer;
+    source.loop = p.loop ?? false;
     source.connect(gain);
     gain.connect(ctx.destination);
     const at = when + start - from,
@@ -182,7 +183,8 @@ export function schedule(
     gain.gain.linearRampToValueAtTime(p.gain, at + fade);
     gain.gain.setValueAtTime(p.gain, at + length - fade);
     gain.gain.linearRampToValueAtTime(0, at + length);
-    source.start(at, p.offset + start - p.when, length);
+    const offset = p.offset + start - p.when;
+    source.start(at, p.loop ? offset % p.buffer.duration : offset, length);
     sources.push(source);
   }
   return sources;

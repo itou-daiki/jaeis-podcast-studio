@@ -20,3 +20,6 @@ public/licenses/word-notices.txt
 *.vtt
 *.srt
 *.studio.json
+!public/music/jaeis-opening-v1.wav
+!public/music/jaeis-ending-v1.wav
+!public/music/jaeis-jingle-v1.wav

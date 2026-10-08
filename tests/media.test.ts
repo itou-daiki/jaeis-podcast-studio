@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { silenceCandidates, encodeWav } from "../src/media";
+import { silenceCandidates, encodeWav, schedule } from "../src/media";
 import {
   buildPlacements,
   buildSegments,
@@ -8,6 +8,161 @@ import {
 } from "../src/editing";
 import type { MusicClip, Track } from "../src/types";
 import fc from "fast-check";
+
+test("BGM loops under the conversation, spans cuts smoothly, and leaves OP/ED/jingles alone", () => {
+  const buffer = { duration: 30 } as AudioBuffer;
+  const tracks = [0, 0.25].map((offset) => ({
+    buffer,
+    offset,
+    gainDb: 0,
+    muted: false,
+  }));
+  const clip = {
+    id: "m",
+    name: "music",
+    buffer: { duration: 2 } as AudioBuffer,
+    gainDb: -12,
+    at: 15,
+  };
+  const music: MusicClip[] = [
+    { ...clip, role: "opening" },
+    { ...clip, role: "ending" },
+    { ...clip, role: "jingle" },
+  ];
+  const bgm: MusicClip = {
+    ...clip,
+    buffer: { duration: 4 } as AudioBuffer,
+    role: "bgm",
+    gainDb: -26,
+  };
+  const segments = buildSegments(30, [{ start: 5, end: 8 }]);
+  const before = buildPlacements(tracks, segments, music);
+  const after = buildPlacements(tracks, segments, [...music, bgm]);
+  expect(after.duration).toBe(33);
+  expect(after.mapping).toEqual(before.mapping);
+  expect(after.placements.filter((p) => p.buffer !== bgm.buffer)).toEqual(
+    before.placements,
+  );
+  expect(
+    after.placements
+      .filter((p) => p.buffer === bgm.buffer)
+      .map(({ when, duration, loop }) => ({ when, duration, loop })),
+  ).toEqual([
+    { when: 2, duration: 12, loop: true },
+    { when: 16, duration: 15, loop: true },
+  ]);
+  expect(buildPlacements(tracks, [], [bgm]).placements).toEqual([]);
+});
+
+test("previewing midway through a long BGM repeats the source instead of starting beyond its end", () => {
+  const starts: number[][] = [];
+  const source = {
+    loop: false,
+    connect() {},
+    start(...args: number[]) {
+      starts.push(args);
+    },
+  };
+  const ctx = {
+    createBufferSource: () => source,
+    createGain: () => ({
+      connect() {},
+      gain: { setValueAtTime() {}, linearRampToValueAtTime() {} },
+    }),
+    destination: {},
+  } as unknown as BaseAudioContext;
+  schedule(
+    ctx,
+    [
+      {
+        buffer: { duration: 4 } as AudioBuffer,
+        when: 2,
+        offset: 0,
+        duration: 28,
+        gain: 0.05,
+        fade: 0.6,
+        loop: true,
+      },
+    ],
+    15,
+    25,
+    100,
+  );
+  expect(source.loop).toBe(true);
+  expect(starts).toEqual([[100, 1, 10]]);
+});
+
+test("adding BGM preserves every voice sample and output timestamp for arbitrary cuts", () => {
+  fc.assert(
+    fc.property(
+      fc.array(
+        fc.tuple(
+          fc.integer({ min: 0, max: 60000 }),
+          fc.integer({ min: 0, max: 60000 }),
+        ),
+        { maxLength: 25 },
+      ),
+      fc.integer({ min: 0, max: 60000 }),
+      (ranges, jingleMs) => {
+        const tracks = [0, 0.17].map((offset) => ({
+          buffer: { duration: 60 } as AudioBuffer,
+          offset,
+          gainDb: 0,
+          muted: false,
+        }));
+        const music: MusicClip[] = [
+          {
+            id: "j",
+            name: "j",
+            role: "jingle",
+            at: jingleMs / 1000,
+            gainDb: -12,
+            buffer: { duration: 3 } as AudioBuffer,
+          },
+        ];
+        const bgm: MusicClip = {
+          ...music[0],
+          role: "bgm",
+          buffer: { duration: 16 } as AudioBuffer,
+        };
+        const segments = buildSegments(
+          60,
+          ranges.map(([a, b]) => ({
+            start: Math.min(a, b) / 1000,
+            end: Math.max(a, b) / 1000,
+          })),
+        );
+        const base = buildPlacements(tracks, segments, music);
+        const mixed = buildPlacements(tracks, segments, [...music, bgm]);
+        expect(mixed.duration).toBe(base.duration);
+        expect(mixed.mapping).toEqual(base.mapping);
+        expect(mixed.placements.filter((p) => p.buffer !== bgm.buffer)).toEqual(
+          base.placements,
+        );
+        const beds = mixed.placements.filter((p) => p.buffer === bgm.buffer);
+        expect(beds.reduce((n, p) => n + p.duration, 0)).toBeCloseTo(
+          segments.reduce((n, s) => n + s.end - s.start, 0),
+          8,
+        );
+        for (const p of beds) {
+          expect(p.duration).toBeGreaterThan(0);
+          expect(p.when + p.duration).toBeLessThanOrEqual(
+            mixed.duration + 1e-8,
+          );
+          for (const j of base.placements.filter(
+            (p) => p.buffer === music[0].buffer,
+          )) {
+            expect(
+              p.when + p.duration <= j.when + 1e-8 ||
+                p.when >= j.when + j.duration - 1e-8,
+            ).toBe(true);
+          }
+        }
+      },
+    ),
+    { numRuns: 150 },
+  );
+});
 
 test("a pause is only proposed if every unmuted speaker is quiet", () => {
   const quiet = {
