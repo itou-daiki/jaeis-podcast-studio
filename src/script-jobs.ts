@@ -1,5 +1,6 @@
 import type { ScriptJob } from "./script.worker";
 import type { Cue } from "./types";
+import type { JingleSuggestion } from "./jingles";
 
 export function scriptJob(
   job: Extract<ScriptJob, { type: "file" }>,
@@ -7,7 +8,12 @@ export function scriptJob(
 export function scriptJob(
   job: Extract<ScriptJob, { type: "match" }>,
 ): Promise<Cue[]>;
-export function scriptJob(job: ScriptJob): Promise<string | Cue[]> {
+export function scriptJob(
+  job: Extract<ScriptJob, { type: "jingles" }>,
+): Promise<JingleSuggestion[]>;
+export function scriptJob(
+  job: ScriptJob,
+): Promise<string | Cue[] | JingleSuggestion[]> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL("./script.worker.ts", import.meta.url), {
       type: "module",

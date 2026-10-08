@@ -62,6 +62,7 @@ import {
 } from "./transcript";
 import {
   missingSources,
+  musicSourceIndices,
   readProject,
   saveProject,
   type Project,
@@ -73,6 +74,8 @@ import { CueSpeaker, ScriptPanel } from "./ScriptPanel";
 import { Waveform } from "./Waveform";
 import { CutEditor } from "./CutEditor";
 import { VoicePanel } from "./VoicePanel";
+import { JinglePanel } from "./JinglePanel";
+import { placeScriptJingle } from "./jingles";
 import { hasVoiceEffects, originalVoice, type VoiceSettings } from "./voice";
 import { DeliveryPanel, NextStep, WorkflowNav, type Step } from "./Workflow";
 
@@ -122,6 +125,7 @@ export default function App() {
   }>({ signature: "", checks: [] });
   const [tracks, setTracks] = useState<Track[]>([]),
     [music, setMusic] = useState<MusicClip[]>([]);
+  const [jingleSource, setJingleSource] = useState<MusicClip>();
   const [history, setHistory] = useState<Cut[][]>([[]]),
     [historyIndex, setHistoryIndex] = useState(0);
   const cuts = history[historyIndex];
@@ -166,6 +170,7 @@ export default function App() {
     [normalize, setNormalize] = useState(true);
   const [help, setHelp] = useState(false),
     [asrRunning, setAsrRunning] = useState(false);
+  const musicImportRole = useRef<"jingle" | undefined>(undefined);
   const input = useRef<HTMLInputElement>(null),
     subtitleInput = useRef<HTMLInputElement>(null),
     projectInput = useRef<HTMLInputElement>(null),
@@ -249,13 +254,17 @@ export default function App() {
           ...(voice ? { voice } : {}),
         }),
       ),
-      music: music.map(({ name, buffer, role, at, gainDb }) => ({
-        name,
-        duration: buffer.duration,
-        role,
-        at,
-        gainDb,
-      })),
+      music: music.map(
+        ({ name, buffer, role, at, gainDb, assetId, scriptJingleKey }) => ({
+          name,
+          duration: buffer.duration,
+          role,
+          at,
+          gainDb,
+          ...(assetId ? { assetId } : {}),
+          ...(scriptJingleKey ? { scriptJingleKey } : {}),
+        }),
+      ),
     }),
     [title, cuts, cues, tracks, music, script],
   );
@@ -663,7 +672,7 @@ export default function App() {
           : playheadRef.current;
       const finish = range ? Math.min(duration, range.end + 2) : duration;
       let from = mode ? sourceToOutput(begin, selectedPlan.mapping) : begin;
-      if (!range && (begin === 0 || from >= selectedPlan.duration - 0.05))
+      if (begin === 0 || (!range && from >= selectedPlan.duration - 0.05))
         from = 0;
       const until = range
         ? mode
@@ -900,6 +909,7 @@ export default function App() {
     setInitialDraft({});
     setTracks([]);
     setMusic([]);
+    setJingleSource(undefined);
     setCues([]);
     setScript(undefined);
     setHistory([[]]);
@@ -929,17 +939,11 @@ export default function App() {
         throw new Error(
           "先に保存時と同じ元音声を全て読み込んでください。ファイル名・サイズ・更新日時を照合します。",
         );
-      if (
-        project.music.length !== music.length ||
-        project.music.some(
-          (s) =>
-            !music.some(
-              (m) =>
-                m.name === s.name &&
-                Math.abs(m.buffer.duration - s.duration) < 0.01,
-            ),
-        )
-      )
+      const musicIndices = musicSourceIndices(
+        project.music,
+        music.map((m) => ({ name: m.name, duration: m.buffer.duration })),
+      );
+      if (musicIndices.some((i) => i < 0))
         throw new Error(
           "保存時と同じOP・ED・ジングルも先に読み込んでください。",
         );
@@ -958,19 +962,11 @@ export default function App() {
       );
       if (project.cuts.some((c) => c.end > length + 0.01))
         throw new Error("カット範囲が素材の長さを超えています。");
-      const available = [...music];
-      const restoredMusic = project.music.map((s) => {
-        const index = available.findIndex(
-          (m) =>
-            m.name === s.name &&
-            Math.abs(m.buffer.duration - s.duration) < 0.01,
-        );
-        if (index < 0)
-          throw new Error(
-            "音楽素材の数が一致しません。同じ音源を複数使う場合も、保存時の本数を読み込んでください。",
-          );
-        return { ...available.splice(index, 1)[0], ...s };
-      });
+      const restoredMusic = project.music.map((s, i) => ({
+        ...music[musicIndices[i]],
+        ...s,
+        id: crypto.randomUUID(),
+      }));
       let extraBytes = 0;
       for (const track of restored) {
         if (!track.voice || !hasVoiceEffects(track.voice)) continue;
@@ -1071,7 +1067,7 @@ export default function App() {
             rel="noreferrer"
             className="version"
           >
-            v0.5.1
+            v0.6.0
           </a>
         </div>
       </header>
@@ -2220,17 +2216,66 @@ export default function App() {
                     </p>
                     <button
                       className="secondary full"
-                      onClick={() => musicInput.current?.click()}
+                      onClick={() => {
+                        musicImportRole.current = undefined;
+                        musicInput.current?.click();
+                      }}
                     >
                       <Plus size={16} />
                       音楽を追加
                     </button>
-                    {music.map((m) => (
+                    <JinglePanel
+                      text={script?.text ?? ""}
+                      cues={cues}
+                      duration={duration}
+                      cuts={cuts}
+                      music={music}
+                      pendingSource={jingleSource}
+                      playhead={playhead}
+                      onOpenScript={() => {
+                        setStep("edit");
+                        setTab("transcript");
+                      }}
+                      onLoadMusic={() => {
+                        musicImportRole.current = "jingle";
+                        musicInput.current?.click();
+                      }}
+                      onPlace={(source, key, at) => {
+                        try {
+                          const next = placeScriptJingle(
+                            jingleSource?.id === source
+                              ? [...music, jingleSource]
+                              : music,
+                            source,
+                            key,
+                            at,
+                            duration,
+                            crypto.randomUUID(),
+                          );
+                          stop();
+                          setMusic(next);
+                          if (jingleSource?.id === source)
+                            setJingleSource(undefined);
+                          setEdited(true);
+                          setNotice(
+                            "ジングルを配置しました。挿入後を聞き、必要なら下の音源設定で微調整してください。",
+                          );
+                        } catch (e) {
+                          setError(message(e));
+                        }
+                      }}
+                      onPreview={(at, edited) =>
+                        void play(edited, { start: at, end: at })
+                      }
+                    />
+                    {music.map((m, musicIndex) => (
                       <article className="music-card" key={m.id}>
                         <div className="section-heading">
-                          <strong title={m.name}>{m.name}</strong>
+                          <strong title={m.name}>
+                            {musicIndex + 1}. {m.name}
+                          </strong>
                           <button
-                            aria-label={`${m.name} を外す`}
+                            aria-label={`${musicIndex + 1}. ${m.name} を外す`}
                             className="icon-button"
                             onClick={() => {
                               stop();
@@ -2245,10 +2290,12 @@ export default function App() {
                         <label>
                           用途
                           <select
+                            aria-label={`音楽 ${musicIndex + 1} の用途`}
                             value={m.role}
                             onChange={(e) =>
                               updateMusic(m.id, {
                                 role: e.target.value as MusicClip["role"],
+                                scriptJingleKey: undefined,
                               })
                             }
                           >
@@ -2261,6 +2308,7 @@ export default function App() {
                           <label>
                             挿入位置（元音声・秒）
                             <input
+                              aria-label={`音楽 ${musicIndex + 1} の挿入位置（秒）`}
                               type="number"
                               min={0}
                               max={duration}
@@ -2281,6 +2329,7 @@ export default function App() {
                           音量 {m.gainDb} dB
                           <input
                             type="range"
+                            aria-label={`音楽 ${musicIndex + 1} の音量`}
                             min={-36}
                             max={0}
                             step={1}
@@ -2444,6 +2493,8 @@ export default function App() {
           accept="audio/*,.mp3,.wav,.m4a"
           onChange={(e) => {
             const f = e.target.files?.[0];
+            const requestedRole = musicImportRole.current;
+            musicImportRole.current = undefined;
             if (f)
               void run(async () => {
                 if (music.length >= 20) throw new Error("音楽は20本までです。");
@@ -2459,19 +2510,21 @@ export default function App() {
                   MAX_PCM_BYTES
                 )
                   throw new Error("素材の合計サイズが大きすぎます。");
-                setMusic((prev) => [
-                  ...prev,
-                  {
-                    id: crypto.randomUUID(),
-                    name: f.name,
-                    buffer,
-                    role: prev.some((m) => m.role === "opening")
+                const clip: MusicClip = {
+                  id: crypto.randomUUID(),
+                  assetId: crypto.randomUUID(),
+                  name: f.name,
+                  buffer,
+                  role:
+                    requestedRole ??
+                    (music.some((m) => m.role === "opening")
                       ? "ending"
-                      : "opening",
-                    at: playheadRef.current,
-                    gainDb: -12,
-                  },
-                ]);
+                      : "opening"),
+                  at: playheadRef.current,
+                  gainDb: -12,
+                };
+                if (requestedRole === "jingle") setJingleSource(clip);
+                else setMusic((prev) => [...prev, clip]);
               });
             e.target.value = "";
           }}

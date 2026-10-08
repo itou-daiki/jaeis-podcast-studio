@@ -36,6 +36,8 @@ export type MusicClip = {
   role: "opening" | "ending" | "jingle";
   at: number;
   gainDb: number;
+  assetId?: string;
+  scriptJingleKey?: string;
 };
 export type Placement = {
   buffer: AudioBuffer;

@@ -2,11 +2,15 @@ import type { Cue } from "./types";
 
 export const MAX_SCRIPT_LENGTH = 100_000;
 export type ScriptTurn = { speaker: string; text: string };
+export type ScriptItem =
+  | { kind: "speech"; text: string }
+  | { kind: "jingle"; label: string; line: number };
 export type ParsedScript = {
   turns: ScriptTurn[];
   speakers: string[];
   excluded: string[];
   unassigned: string[];
+  sequence: ScriptItem[];
 };
 
 const direction =
@@ -25,6 +29,12 @@ const isName = (s: string) =>
   ) &&
   !/[。！？!?：:]/.test(s);
 
+// Explicit directions only: a spoken sentence mentioning jingles is not a cue.
+const jingleDirection = (line: string) =>
+  /^(?:[♪♫♬\s【】［］\[\]（()）＜＞<>]*ジングル[♪♫♬\s【】［］\[\]（()）＜＞<>]*|※\s*(?:ここで)?\s*ジングル(?:を?(?:入れる|挿入))?[。！!\s]*)$/i.test(
+    line,
+  );
+
 // A script is evidence, not a transcript. Keep excluded text visible for review.
 export function parseScript(source: string): ParsedScript {
   if (source.length > MAX_SCRIPT_LENGTH)
@@ -34,6 +44,7 @@ export function parseScript(source: string): ParsedScript {
     speakers: [],
     excluded: [],
     unassigned: [],
+    sequence: [],
   };
   let speaker = "";
   let turn: ScriptTurn | undefined;
@@ -41,65 +52,85 @@ export function parseScript(source: string): ParsedScript {
     speaker = "";
     turn = undefined;
   };
-  for (const original of source
+  for (const [lineIndex, original] of source
     .replace(/^\uFEFF/, "")
     .replace(/\r/g, "")
-    .split("\n")) {
-    let line = original
-      .replace(/\*\*|__/g, "")
-      .replace(/^\s*#{1,6}\s+/, "")
-      .trim();
-    if (!line) continue;
-    if (/^(?:※|注[：:]|備考[：:]|編集メモ|収録メモ)/.test(line)) {
-      result.excluded.push(line);
-      continue;
-    }
-    const header = line.match(
-      /^(?:【([^】]+)】|\[([^\]]+)\]|([^：:\n]{1,40})[：:])\s*(.*)$/,
-    );
-    if (header) {
-      const name = (header[1] ?? header[2] ?? header[3]).trim();
-      if (!isName(name)) {
-        result.excluded.push(line);
+    .split("\n")
+    .entries()) {
+    const parts = /^(?:※|注[：:]|備考[：:]|編集メモ|収録メモ)/.test(
+      original.replace(/\*\*|__/g, "").trim(),
+    )
+      ? [original]
+      : original.split(
+          /([♪♫♬]+\s*ジングル\s*[♪♫♬]+|[（(\[［【＜<]\s*ジングル\s*[）)\]］】＞>])/,
+        );
+    for (const part of parts) {
+      let line = part
+        .replace(/\*\*|__/g, "")
+        .replace(/^\s*#{1,6}\s+/, "")
+        .trim();
+      if (!line) continue;
+      if (jingleDirection(line)) {
+        result.sequence.push({
+          kind: "jingle",
+          label: line,
+          line: lineIndex + 1,
+        });
         reset();
         continue;
       }
-      speaker = name;
-      turn = undefined;
-      if (!result.speakers.includes(name)) result.speakers.push(name);
-      line = header[4].trim();
+      if (/^(?:※|注[：:]|備考[：:]|編集メモ|収録メモ)/.test(line)) {
+        result.excluded.push(line);
+        continue;
+      }
+      const header = line.match(
+        /^(?:【([^】]+)】|\[([^\]]+)\]|([^：:\n]{1,40})[：:])\s*(.*)$/,
+      );
+      if (header) {
+        const name = (header[1] ?? header[2] ?? header[3]).trim();
+        if (!isName(name)) {
+          result.excluded.push(line);
+          reset();
+          continue;
+        }
+        speaker = name;
+        turn = undefined;
+        if (!result.speakers.includes(name)) result.speakers.push(name);
+        line = header[4].trim();
+        if (!line) continue;
+      }
+      // Remove only explicitly marked directions inside otherwise spoken lines.
+      line = line
+        .replace(/[（(\[]([^）)\]]+)[）)\]]/g, (full, body: string) => {
+          if (
+            !direction.test(body) &&
+            !/^(?:笑|拍手|沈黙|休憩|\d+秒)$/.test(body)
+          )
+            return full;
+          result.excluded.push(full);
+          return "";
+        })
+        .trim();
       if (!line) continue;
+      if (
+        /^[○〇◯□＿_\s…・.]+$/.test(line) ||
+        /^(?:♪|＜|<)/.test(line) ||
+        (/^[(（].*[)）]$/.test(line) && direction.test(line.slice(1, -1)))
+      ) {
+        result.excluded.push(line);
+        if (/ジングル|コメント|質問|対話/.test(line)) reset();
+        continue;
+      }
+      result.sequence.push({ kind: "speech", text: line });
+      if (!speaker) {
+        result.unassigned.push(line);
+        continue;
+      }
+      if (!turn) {
+        turn = { speaker, text: line };
+        result.turns.push(turn);
+      } else turn.text += "\n" + line;
     }
-    // Remove only explicitly marked directions inside otherwise spoken lines.
-    line = line
-      .replace(/[（(\[]([^）)\]]+)[）)\]]/g, (full, body: string) => {
-        if (
-          !direction.test(body) &&
-          !/^(?:笑|拍手|沈黙|休憩|\d+秒)$/.test(body)
-        )
-          return full;
-        result.excluded.push(full);
-        return "";
-      })
-      .trim();
-    if (!line) continue;
-    if (
-      /^[○〇◯□＿_\s…・.]+$/.test(line) ||
-      /^(?:♪|＜|<)/.test(line) ||
-      (/^[(（].*[)）]$/.test(line) && direction.test(line.slice(1, -1)))
-    ) {
-      result.excluded.push(line);
-      if (/ジングル|コメント|質問|対話/.test(line)) reset();
-      continue;
-    }
-    if (!speaker) {
-      result.unassigned.push(line);
-      continue;
-    }
-    if (!turn) {
-      turn = { speaker, text: line };
-      result.turns.push(turn);
-    } else turn.text += "\n" + line;
   }
   return result;
 }

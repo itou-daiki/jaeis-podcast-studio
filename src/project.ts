@@ -20,6 +20,8 @@ type SavedMusic = {
   role: "opening" | "ending" | "jingle";
   at: number;
   gainDb: number;
+  assetId?: string;
+  scriptJingleKey?: string;
 };
 export type Project = {
   version: 1;
@@ -33,14 +35,35 @@ export type Project = {
 export const saveProject = (project: Project) =>
   JSON.stringify(project, null, 2);
 
-// Consume matches: two uses of one music file require two loaded clips.
+// Legacy clips consume distinct files; explicit shared assets reuse one decode.
+export function musicSourceIndices(
+  saved: SavedMusic[],
+  loaded: { name: string; duration: number }[],
+): number[] {
+  const used = new Set<number>();
+  const shared = new Map<string, number>();
+  return saved.map((s) => {
+    if (s.assetId && shared.has(s.assetId)) return shared.get(s.assetId)!;
+    const index = loaded.findIndex(
+      (m, i) =>
+        !used.has(i) &&
+        m.name === s.name &&
+        Math.abs(m.duration - s.duration) < 0.01,
+    );
+    if (index >= 0) used.add(index);
+    if (s.assetId) shared.set(s.assetId, index);
+    return index;
+  });
+}
+
 export function missingSources(
   project: Project,
   tracks: Pick<SavedTrack, "name" | "size" | "lastModified">[],
   music: Pick<SavedMusic, "name" | "duration">[],
 ) {
-  const voices = [...tracks],
-    clips = [...music];
+  const voices = [...tracks];
+  const indices = musicSourceIndices(project.music, music);
+  const missingAssets = new Set<string>();
   return {
     voices: project.tracks
       .filter((s) => {
@@ -56,13 +79,11 @@ export function missingSources(
       })
       .map((s) => s.name),
     music: project.music
-      .filter((s) => {
-        const i = clips.findIndex(
-          (m) => m.name === s.name && Math.abs(m.duration - s.duration) < 0.01,
-        );
-        if (i < 0) return true;
-        clips.splice(i, 1);
-        return false;
+      .filter((s, i) => {
+        if (indices[i] >= 0 || (s.assetId && missingAssets.has(s.assetId)))
+          return false;
+        if (s.assetId) missingAssets.add(s.assetId);
+        return true;
       })
       .map((s) => s.name),
   };
@@ -112,9 +133,28 @@ export function readProject(text: string): Project {
       !["opening", "ending", "jingle"].includes(m.role) ||
       !finite(m.duration, 0, 2700) ||
       !finite(m.at, 0, 86400) ||
-      !finite(m.gainDb, -60, 12)
+      !finite(m.gainDb, -60, 12) ||
+      (m.assetId !== undefined &&
+        (typeof m.assetId !== "string" ||
+          !m.assetId.length ||
+          m.assetId.length > 100)) ||
+      (m.scriptJingleKey !== undefined &&
+        (typeof m.scriptJingleKey !== "string" ||
+          !m.scriptJingleKey.length ||
+          m.scriptJingleKey.length > 2000))
     )
       throw new Error("音楽の設定が正しくありません。");
+  const assets = new Map<string, SavedMusic>();
+  for (const m of p.music as SavedMusic[]) {
+    if (!m.assetId) continue;
+    const prior = assets.get(m.assetId);
+    if (
+      prior &&
+      (prior.name !== m.name || Math.abs(prior.duration - m.duration) >= 0.01)
+    )
+      throw new Error("共有する音楽素材の情報が一致しません。");
+    assets.set(m.assetId, m);
+  }
   if (
     p.script !== undefined &&
     (!p.script ||

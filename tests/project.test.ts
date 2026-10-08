@@ -1,6 +1,61 @@
 import { expect, test } from "vitest";
-import { missingSources, readProject, saveProject } from "../src/project";
+import {
+  missingSources,
+  musicSourceIndices,
+  readProject,
+  saveProject,
+} from "../src/project";
 import fc from "fast-check";
+
+test("script jingle positions roundtrip and reused audio needs only one source on resume", () => {
+  const project = {
+    version: 1 as const,
+    title: "原稿の指定",
+    tracks: [],
+    cuts: [],
+    cues: [],
+    music: [5, 15].map((at, i) => ({
+      name: "jingle.wav",
+      duration: 3,
+      role: "jingle" as const,
+      at,
+      gainDb: -12,
+      assetId: "same-source",
+      scriptJingleKey: `mark-${i}`,
+    })),
+  };
+  const restored = readProject(saveProject(project));
+  expect(restored).toEqual(project);
+  expect(missingSources(restored, [], [])).toEqual({
+    voices: [],
+    music: ["jingle.wav"],
+  });
+  const loaded = [{ name: "jingle.wav", duration: 3 }];
+  expect(missingSources(restored, [], loaded)).toEqual({
+    voices: [],
+    music: [],
+  });
+  expect(musicSourceIndices(restored.music, loaded)).toEqual([0, 0]);
+  expect(() =>
+    readProject(
+      JSON.stringify({
+        ...project,
+        music: [
+          project.music[0],
+          { ...project.music[1], name: "different.wav" },
+        ],
+      }),
+    ),
+  ).toThrow();
+  expect(() =>
+    readProject(
+      JSON.stringify({
+        ...project,
+        music: [{ ...project.music[0], assetId: {} }],
+      }),
+    ),
+  ).toThrow();
+});
 
 test("voice adjustments roundtrip and invalid settings cannot enter a restored project", () => {
   const track = {

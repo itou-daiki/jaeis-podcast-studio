@@ -28,10 +28,10 @@ export function ScriptPanel({
   return (
     <details className="script-panel">
       <summary>
-        原稿で話者を推定 <span>任意</span>
+        原稿で話者・ジングル位置を推定 <span>任意</span>
       </summary>
       <p className="hint">
-        原稿がなくても文字起こしできます。原稿があれば、似た発言から先生の名前を候補にします。声そのものを識別する機能ではありません。
+        原稿がなくても文字起こしできます。原稿があれば、似た発言から先生の名前やジングルの挿入位置を探せます。声そのものを識別する機能ではありません。
       </p>
       <button className="secondary full" onClick={() => input.current?.click()}>
         <Upload size={15} />
@@ -74,7 +74,8 @@ export function ScriptPanel({
         <p className="hint compact script-filename">読込元：{script.name}</p>
       ) : null}
       <p className="hint compact">
-        名前は【田中先生】や「田中先生：」で区切ります。「司会」も実名に書き換えられます。※注釈や♪ジングル♪は照合から除きます。
+        名前は【田中先生】や「田中先生：」で区切ります。注釈は発言の照合から除き、「♪ジングル♪」は配置指示として残します。挿入位置は「3
+        音量・音楽を整える」で確認できます。
       </p>
       {script?.text ? (
         <>
@@ -99,6 +100,10 @@ export function ScriptPanel({
             {parsed.turns.length > 30 ? (
               <p>先頭30区間を表示しています。</p>
             ) : null}
+            <h3>
+              ジングルの配置指示：
+              {parsed.sequence.filter((s) => s.kind === "jingle").length}件
+            </h3>
             <h3>注釈などとして除外：{parsed.excluded.length}件</h3>
             <pre>{parsed.excluded.slice(0, 30).join("\n") || "なし"}</pre>
             <h3>話者の区切りがない本文：{parsed.unassigned.length}行</h3>

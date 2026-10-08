@@ -8,6 +8,35 @@ import {
 } from "../src/speakers";
 import type { Cue } from "../src/types";
 
+test("inline and full-width jingle marks are directions at the spoken boundary", () => {
+  const p = parseScript(
+    "【司会】これまでのお話をまとめます。（ジングル）次は授業の工夫について伺います。\n［ジングル］\n※ジングルの音量を下げる",
+  );
+  expect(p.sequence.map((s) => s.kind)).toEqual([
+    "speech",
+    "jingle",
+    "speech",
+    "jingle",
+  ]);
+  expect(p.sequence[1]).toMatchObject({ kind: "jingle", line: 1 });
+});
+
+test("jingle directions retain their position without becoming speech or generic notes", () => {
+  const p = parseScript(
+    `【司会】本日は授業づくりについてお話しします。\n**♪ジングル♪**\n【田中】家庭でも使える教材を公開しています。\n※ここでジングル\n次のお話を伺います。\nジングルという言葉について説明します。\n※ジングルは入れない`,
+  );
+  expect(p.sequence).toEqual([
+    { kind: "speech", text: "本日は授業づくりについてお話しします。" },
+    { kind: "jingle", label: "♪ジングル♪", line: 2 },
+    { kind: "speech", text: "家庭でも使える教材を公開しています。" },
+    { kind: "jingle", label: "※ここでジングル", line: 4 },
+    { kind: "speech", text: "次のお話を伺います。" },
+    { kind: "speech", text: "ジングルという言葉について説明します。" },
+  ]);
+  expect(p.excluded).toEqual(["※ジングルは入れない"]);
+  expect(p.turns.map((t) => t.text).join("")).not.toContain("♪");
+});
+
 test("script separates named speech from directions, placeholders, and discussion", () => {
   const parsed = parseScript(`**【司会】**
 みなさんこんにちは。今日は授業づくりのお話です。

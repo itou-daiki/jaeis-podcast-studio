@@ -1,6 +1,23 @@
 import { expect, test } from "vitest";
 import { parseTranscript, detectRetakes, toSrt } from "../src/transcript";
 
+test("Whisper import ignores only empty zero-length placeholders", () => {
+  const cue = { start: 3, end: 7, text: "実際に話した内容です。" };
+  expect(
+    parseTranscript(
+      JSON.stringify({ segments: [cue, { start: 7, end: 7, text: " " }] }),
+    ),
+  ).toEqual([cue]);
+  for (const invalid of [
+    { start: 7, end: 7, text: "発言は捨てない" },
+    { start: -1, end: -1, text: "" },
+    { start: 8, end: 7, text: "" },
+  ])
+    expect(() =>
+      parseTranscript(JSON.stringify({ segments: [cue, invalid] })),
+    ).toThrow();
+});
+
 test("Zoom VTT preserves speaker, timestamps and multiline speech", () => {
   expect(
     parseTranscript(

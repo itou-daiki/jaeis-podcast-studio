@@ -81,7 +81,24 @@ export function parseTranscript(source: string): Cue[] {
         }),
       );
     }
-    return validateCues(Array.isArray(data) ? data : data?.segments);
+    const segments = Array.isArray(data) ? data : data?.segments;
+    // Whisper can emit an empty, zero-duration placeholder. Do not infer
+    // missing timestamps or discard actual speech to make an import succeed.
+    if (Array.isArray(segments) && segments.length <= 50000)
+      return validateCues(
+        segments.filter(
+          (c) =>
+            !(
+              c &&
+              Number.isFinite(c.start) &&
+              c.start >= 0 &&
+              c.start === c.end &&
+              typeof c.text === "string" &&
+              !c.text.trim()
+            ),
+        ),
+      );
+    return validateCues(segments);
   }
   const cues: Cue[] = [];
   const stamp = /(\d{1,2}:)?\d{2}:\d{2}[.,]\d{1,3}/g;
