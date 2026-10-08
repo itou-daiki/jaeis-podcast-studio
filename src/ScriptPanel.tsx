@@ -50,7 +50,7 @@ export function ScriptPanel({
         }}
       />
       <p className="hint compact">
-        .docx / .txt / .md · 10 MB・10万文字まで。ここでの読み込み・話者照合は端末内で行います。Geminiモードは同意後に原稿をGoogleへ送信します。
+        .docx / .txt / .md · 10 MB・10万文字まで。読み込み・話者照合は端末内で行います。
       </p>
       <label className="script-label">
         原稿の本文（直接貼り付けも可）

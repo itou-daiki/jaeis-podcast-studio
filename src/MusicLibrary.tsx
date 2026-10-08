@@ -80,7 +80,7 @@ export function MusicLibrary({
         })}
       </ul>
       <p className="hint">
-        JAEISの3音源は公開同梱の許可を確認済みです。標準BGMはアプリ用の合成音です。原稿用ジングルは、配置するまでは音声に入りません。
+        標準BGMはアプリ用の合成音です。原稿用ジングルは、配置するまでは音声に入りません。
       </p>
     </details>
   );
