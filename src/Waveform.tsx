@@ -10,6 +10,8 @@ type Props = {
   cuts: Cut[];
   onSelect: (range: Range) => void;
   onSeek: (time: number) => void;
+  // Outside the cut step the waveform only moves the playhead.
+  selectable?: boolean;
 };
 export const Waveform = memo(function Waveform({
   track,
@@ -19,6 +21,7 @@ export const Waveform = memo(function Waveform({
   cuts,
   onSelect,
   onSeek,
+  selectable = true,
 }: Props) {
   const canvas = useRef<HTMLCanvasElement>(null),
     start = useRef<number | null>(null),
@@ -101,7 +104,11 @@ export const Waveform = memo(function Waveform({
       ref={container}
       className="waveform"
       role="group"
-      aria-label={`${track.name} の波形。ドラッグで選択。キーボードでは下の開始・終了欄を使用。`}
+      aria-label={
+        selectable
+          ? `${track.name} の波形。ドラッグで選択。キーボードでは下の開始・終了欄を使用。`
+          : `${track.name} の波形。クリックで再生位置を移動。`
+      }
       onPointerDown={(e) => {
         if (e.button !== 0) return;
         start.current = at(e);
@@ -109,14 +116,18 @@ export const Waveform = memo(function Waveform({
         onSeek(start.current);
       }}
       onPointerMove={(e) => {
-        if (start.current !== null)
+        if (start.current !== null && selectable)
           onSelect({
             start: Math.min(start.current, at(e)),
             end: Math.max(start.current, at(e)),
           });
       }}
       onPointerUp={(e) => {
-        if (start.current !== null && Math.abs(at(e) - start.current) < 0.08)
+        if (
+          selectable &&
+          start.current !== null &&
+          Math.abs(at(e) - start.current) < 0.08
+        )
           onSelect({ start: at(e), end: at(e) });
         start.current = null;
       }}

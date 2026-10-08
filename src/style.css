@@ -423,6 +423,80 @@ main {
   flex: none;
   width: 24px;
 }
+.step-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.step-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.step-status.done {
+  color: var(--teal);
+}
+.step-guide {
+  margin: 4px 0 16px;
+  padding: 12px 14px 12px 32px;
+  background: #edf1fc;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.75;
+  color: var(--ink);
+}
+.step-guide li + li {
+  margin-top: 2px;
+}
+.timeline-hint {
+  margin: 0;
+  padding: 10px 16px;
+  font-size: 12px;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+}
+.text-button.inline {
+  display: inline;
+  padding: 0;
+  min-height: 0;
+  font-size: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.empty-note {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.file-name {
+  font-family: ui-monospace, "SFMono-Regular", monospace;
+  font-weight: 600;
+  word-break: break-all;
+}
+.after-export {
+  margin-top: 18px;
+  padding: 14px;
+  background: #edf1fc;
+  border-radius: 8px;
+}
+.after-export h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: var(--teal);
+}
+.after-export ol {
+  margin: 0 0 12px;
+  padding-left: 20px;
+  font-size: 12px;
+  line-height: 1.75;
+}
 .step-next {
   padding: 18px;
   border-top: 1px solid var(--line);

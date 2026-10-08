@@ -74,10 +74,18 @@ import { CutEditor } from "./CutEditor";
 import { VoicePanel } from "./VoicePanel";
 import { JinglePanel } from "./JinglePanel";
 import { MusicLibrary } from "./MusicLibrary";
+import { builtInMusic } from "./music-catalog";
 import { loadBuiltInMusic, restoreMusic } from "./music-library";
 import { placeScriptJingle } from "./jingles";
 import { hasVoiceEffects, originalVoice, type VoiceSettings } from "./voice";
-import { DeliveryPanel, NextStep, WorkflowNav, type Step } from "./Workflow";
+import {
+  DeliveryPanel,
+  NextStep,
+  StepGuide,
+  WorkflowNav,
+  stepProgress,
+  type Step,
+} from "./Workflow";
 import { renderExport } from "./export-audio";
 
 const draftKey = "jaeis-podcast-studio:draft:v1";
@@ -285,6 +293,14 @@ export default function App() {
     [project],
   );
   const checks = review.signature === audioSignature ? review.checks : [];
+  const [exportedSignature, setExportedSignature] = useState("");
+  const exportSignature = JSON.stringify([
+    audioSignature,
+    format,
+    normalize,
+    title,
+  ]);
+  const exported = exportedSignature === exportSignature;
   const missing = pendingProject
     ? missingSources(
         pendingProject,
@@ -301,7 +317,7 @@ export default function App() {
       setSaveStatus("編集内容をこのブラウザに自動保存済み（音声は含みません）");
     } catch {
       setSaveStatus(
-        "自動保存できません。「編集を保存」でファイルに保存してください。",
+        "自動保存できません。「編集ファイルを保存」でファイルに保存してください。",
       );
     }
   }, [project, pendingProject, tracks]);
@@ -562,6 +578,42 @@ export default function App() {
         clip.role === "bgm"
           ? "BGMを会話の下に追加しました。OP・ED・ジングルの間は止まります。声と一緒に聞いて音量を調整してください。"
           : `${clip.name}を${clip.role === "jingle" ? `元音声の${formatTime(playheadRef.current)}に` : ""}追加しました。`,
+      );
+    });
+  }
+
+  // Selections and fine-tuning belong to the cut step; leaving it must not keep
+  // a hidden range that later changes what "試聴" plays.
+  function goToStep(next: Step) {
+    if (next !== step && next !== "edit") {
+      if (next !== "export") setEditingCutId(null);
+      if (!(next === "export" && editingCutId)) setSelection(emptyRange);
+    }
+    setStep(next);
+  }
+
+  // One click for the usual episode frame, so editors need not find OP and ED
+  // separately in the list.
+  async function addStandardFrame() {
+    await run(async () => {
+      setBusy("内蔵音源を読み込んでいます…");
+      const ids = builtInMusic
+        .filter((a) => a.role === "opening" || a.role === "ending")
+        .filter((a) => !music.some((m) => m.role === a.role))
+        .map((a) => a.id);
+      if (!ids.length) return;
+      if (music.length + ids.length > 20)
+        throw new Error("音楽は20本までです。");
+      const clips = await Promise.all(ids.map((id) => loadBuiltInMusic(id)));
+      setMusic((prev) => [
+        ...prev,
+        ...clips
+          .filter((c) => !prev.some((m) => m.role === c.role))
+          .map((c) => ({ ...c, at: 0 })),
+      ]);
+      setEdited(true);
+      setNotice(
+        "オープニングとエンディングを追加しました。「編集後を試聴」で番組の始まりと終わりを聞いてください。",
       );
     });
   }
@@ -1080,6 +1132,7 @@ export default function App() {
         `${safeName(title)}.${format}`,
         format === "mp3" ? "audio/mpeg" : "audio/wav",
       );
+      setExportedSignature(exportSignature);
       setNotice(
         "音声を書き出しました。公開前に、つなぎ目と音楽の音量を必ず試聴してください。",
       );
@@ -1122,7 +1175,7 @@ export default function App() {
             rel="noreferrer"
             className="version"
           >
-            v0.8.1
+            v0.9.0
           </a>
         </div>
       </header>
@@ -1152,6 +1205,7 @@ export default function App() {
             <div className="project-actions">
               <button
                 className="secondary"
+                title="前回や前の担当者が保存した .studio.json から続きを始めます"
                 onClick={() => projectInput.current?.click()}
               >
                 <FolderOpen size={16} />
@@ -1159,18 +1213,28 @@ export default function App() {
               </button>
               <button
                 className="secondary"
+                title="カット・字幕・音楽の設定をファイルに保存します（音声は含みません）"
                 onClick={save}
                 disabled={!tracks.length || !!pendingProject}
               >
                 <Save size={16} />
-                編集を保存
+                編集ファイルを保存
               </button>
             </div>
           </section>
           <WorkflowNav
             step={step}
             hasAudio={!!tracks.length && !pendingProject}
-            onChange={setStep}
+            progress={stepProgress({
+              trackCount: tracks.length,
+              cutCount: cuts.length,
+              remaining: remaining.length,
+              reviewed: candidates.length > 0 && remaining.length === 0,
+              music,
+              duration: plan.duration,
+              exported,
+            })}
+            onChange={goToStep}
           />
           {initialDraft.project && !tracks.length && !pendingProject ? (
             <section className="resume-banner" aria-label="前回の編集">
@@ -1310,7 +1374,7 @@ export default function App() {
                           if (
                             (cuts.length || cues.length) &&
                             !window.confirm(
-                              "素材を外すと、カットと文字起こしがリセットされます。先に編集を保存しましたか？",
+                              "素材を外すと、カットと文字起こしがリセットされます。先に編集ファイルを保存しましたか？",
                             )
                           )
                             return;
@@ -1333,10 +1397,10 @@ export default function App() {
                   ))}
                 </div>
                 <p className="hint">
-                  元の音声ファイルは保管してください。「編集を保存」で、別のPCでも開ける編集ファイルを保存できます。
+                  元の音声ファイルは保管してください。「編集ファイルを保存」で、別のPCでも開ける編集ファイルを保存できます。
                 </p>
                 {tracks.length && !pendingProject ? (
-                  <NextStep step={step} onChange={setStep} />
+                  <NextStep step={step} onChange={goToStep} />
                 ) : null}
               </aside>
             ) : null}
@@ -1489,6 +1553,11 @@ export default function App() {
                     <br />
                     同じ会話を二重に重ねないようにします。
                   </p>
+                  <p className="hint empty-note">
+                    途中でやめても、編集内容はこのブラウザに自動保存されます（音声は再開時に選び直します）。
+                    <br />
+                    前の担当者から編集ファイル（.studio.json）を受け取った場合は、右上の「編集ファイルを開く」から始めます。
+                  </p>
                 </div>
               ) : (
                 <>
@@ -1520,7 +1589,12 @@ export default function App() {
                             track={track}
                             duration={duration || 1}
                             zoom={zoom}
-                            selection={selection}
+                            selection={
+                              step === "edit" || editingCut
+                                ? selection
+                                : emptyRange
+                            }
+                            selectable={step === "edit" || !!editingCut}
                             cuts={cuts}
                             onSelect={select}
                             onSeek={seek}
@@ -1574,7 +1648,7 @@ export default function App() {
                         });
                       }}
                     />
-                  ) : (
+                  ) : step === "edit" ? (
                     <>
                       <div className="selection-bar">
                         <Scissors size={16} />
@@ -1661,6 +1735,12 @@ export default function App() {
                         </button>
                       </div>
                     </>
+                  ) : (
+                    <p className="timeline-hint">
+                      {step === "sound"
+                        ? "波形をクリックすると再生位置が移動します。ジングルは再生位置に挿入できます。"
+                        : "波形をクリックすると、その位置から聞けます。カットを直すときは「2 不要な部分をカット」へ戻ります。"}
+                    </p>
                   )}
                   {step === "sound" ? (
                     <div className="mix-section">
@@ -1759,7 +1839,7 @@ export default function App() {
                   ) : null}
                 </>
               )}
-              {tracks.length > 0 ? (
+              {tracks.length > 0 && (step === "edit" || step === "export") ? (
                 <div className="edit-log">
                   <div className="section-heading">
                     <h3>
@@ -1816,7 +1896,9 @@ export default function App() {
                     </div>
                   ) : (
                     <p className="hint">
-                      波形をドラッグして範囲を選ぶか、右の候補から確認します。
+                      {step === "edit"
+                        ? "まだカットはありません。右の「候補を探す」か、波形のドラッグでカットします。"
+                        : "カットはありません。"}
                     </p>
                   )}
                 </div>
@@ -1838,7 +1920,7 @@ export default function App() {
                       onClick={() => setTab("transcript")}
                     >
                       <FileText size={16} />
-                      文字起こし
+                      文字起こし（任意）
                     </button>
                   </div>
                 ) : null}
@@ -1848,11 +1930,13 @@ export default function App() {
                       <h2>カット候補を確認</h2>
                       <span>{remaining.length}件</span>
                     </div>
-                    <p className="hint">
-                      長い間の中央を詰め、前後に余白を残します。
-                      <br />
-                      採用するまで、音声は残ります。
-                    </p>
+                    <StepGuide
+                      items={[
+                        "「候補を探す」で、長い間や言い直しを見つける",
+                        "1件ずつ「前後を聞く」→「カットする」か「残す」",
+                        "ほかに消したい所は、波形をドラッグしてカット",
+                      ]}
+                    />
                     <label className="pause-preset">
                       間の残し方
                       <select
@@ -1962,11 +2046,24 @@ export default function App() {
                       <Search size={16} />
                       候補を探す
                     </button>
+                    {cues.length ? (
+                      <p className="hint compact">
+                        文字起こし{cues.length}
+                        区間から、言い直し・収録中断の候補も探します。
+                      </p>
+                    ) : (
+                      <p className="hint compact">
+                        今は長い間だけを探します。言い直しも探すには{" "}
+                        <button
+                          className="text-button inline"
+                          onClick={() => setTab("transcript")}
+                        >
+                          先に文字起こし（任意）
+                        </button>
+                      </p>
+                    )}
                     <p className="hint compact">
-                      {cues.length
-                        ? `文字起こし${cues.length}区間から、言い直し・収録中断の候補も探します。`
-                        : "言い直し・収録中断も探す場合は、先に文字起こしを読み込んでください。"}
-                      原稿との違いだけでは判定しません。
+                      「カットする」を押すまで音声は変わりません。
                     </p>
                     <div className="candidate-list">
                       {remaining.length ? (
@@ -2032,17 +2129,13 @@ export default function App() {
                             </div>
                           </article>
                         ))
-                      ) : (
+                      ) : candidates.length ? (
                         <div className="quiet-state">
                           <p>
-                            {candidates.length
-                              ? "すべての候補を確認しました。波形から手動でカットすることもできます。"
-                              : cues.length
-                                ? "「候補を探す」で、静かな間や言い直し・収録中断を確認します。"
-                                : "「候補を探す」で静かな区間を探せます。言い直しも探す場合は、先に文字起こしをしてください。"}
+                            すべての候補を確認しました。次は「音量・音楽を整える」へ進みます。
                           </p>
                         </div>
-                      )}
+                      ) : null}
                     </div>
                   </div>
                 ) : null}
@@ -2264,9 +2357,23 @@ export default function App() {
                     <div className="section-heading">
                       <h2>音楽を加える</h2>
                     </div>
-                    <p className="hint">
-                      OP・EDは番組の前後、ジングルは話題の間に。BGMは会話の下に小さく重ねます。
-                    </p>
+                    <StepGuide
+                      items={[
+                        "オープニングとエンディングを入れる",
+                        "話題の切り替わりにジングルを入れる",
+                        "声が小さい・雑音が気になるときは、左の「声の音量・ノイズ」で調整",
+                      ]}
+                    />
+                    {music.some((m) => m.role === "opening") &&
+                    music.some((m) => m.role === "ending") ? null : (
+                      <button
+                        className="primary full"
+                        onClick={() => void addStandardFrame()}
+                      >
+                        <Plus size={16} />
+                        オープニングとエンディングを追加
+                      </button>
+                    )}
                     <MusicLibrary
                       music={music}
                       pendingSource={jingleSource}
@@ -2295,7 +2402,7 @@ export default function App() {
                       pendingSource={jingleSource}
                       playhead={playhead}
                       onOpenScript={() => {
-                        setStep("edit");
+                        goToStep("edit");
                         setTab("transcript");
                       }}
                       onLoadMusic={() => {
@@ -2434,6 +2541,9 @@ export default function App() {
                     cutCount={cuts.length}
                     remaining={remaining.length}
                     checks={checks}
+                    fileName={`${safeName(title)}.${format}`}
+                    exported={exported}
+                    onSaveProject={save}
                     onCheck={(index, value) =>
                       setReview({
                         signature: audioSignature,
@@ -2492,7 +2602,7 @@ export default function App() {
                     </button>
                   </DeliveryPanel>
                 ) : null}
-                <NextStep step={step} onChange={setStep} />
+                <NextStep step={step} onChange={goToStep} />
               </aside>
             ) : null}
           </div>
@@ -2541,7 +2651,7 @@ export default function App() {
                 if (
                   cues.length &&
                   !window.confirm(
-                    "現在の文字起こしと話者の確認結果を置き換えます。必要なら先に編集を保存してください。",
+                    "現在の文字起こしと話者の確認結果を置き換えます。必要なら先に編集ファイルを保存してください。",
                   )
                 )
                   return;
@@ -2696,7 +2806,7 @@ export default function App() {
               Pagesに記録され得ます。モデルはブラウザにキャッシュされる場合があります。
             </p>
             <p>
-              編集内容・字幕・原稿・話者の確認結果はこのブラウザに自動保存します（音声本体・操作デモは含みません）。再開時は同じ元音声を選び直してください。共有PCでは他の利用者も内容を参照できる場合があります。「編集を保存」でファイルにも保管してください。
+              編集内容・字幕・原稿・話者の確認結果はこのブラウザに自動保存します（音声本体・操作デモは含みません）。再開時は同じ元音声を選び直してください。共有PCでは他の利用者も内容を参照できる場合があります。「編集ファイルを保存」でファイルにも保管してください。
             </p>
             <h3>現在の制限</h3>
             <p>
