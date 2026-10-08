@@ -1832,6 +1832,39 @@ footer > .text-button {
   align-items: center;
   flex-wrap: wrap;
 }
+.auto-key-guide {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.auto-key-guide h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+.auto-key-link {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-weight: 600;
+  text-decoration: underline;
+}
+.auto-key-link span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+.auto-key-guide ol {
+  margin: 12px 0;
+  padding-left: 22px;
+  line-height: 1.8;
+}
+.auto-key-guide li + li {
+  margin-top: 4px;
+}
+.auto-key-guide .hint a {
+  text-decoration: underline;
+}
 .auto-key-row {
   align-items: end;
   margin: 18px 0 8px;

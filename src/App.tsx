@@ -1227,7 +1227,7 @@ export default function App() {
             rel="noreferrer"
             className="version"
           >
-            v0.7.0
+            v0.7.1
           </a>
         </div>
       </header>

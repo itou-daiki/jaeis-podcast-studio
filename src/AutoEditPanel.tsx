@@ -1,7 +1,42 @@
 import { useState } from "react";
-import { ArrowRight, Undo2 } from "lucide-react";
+import { ArrowRight, ExternalLink, Undo2 } from "lucide-react";
 import { DEFAULT_GEMINI_MODEL } from "./gemini";
 import type { AutoEditResult } from "./auto-edit";
+
+const apiKeyGuide = (
+  <section className="auto-key-guide" aria-labelledby="gemini-key-guide-title">
+    <h3 id="gemini-key-guide-title">APIキーの取得方法</h3>
+    <a
+      className="auto-key-link"
+      href="https://aistudio.google.com/apikey"
+      target="_blank"
+      rel="noopener noreferrer"
+    >
+      Google AI StudioでAPIキーを取得
+      <ExternalLink size={15} aria-hidden="true" />
+      <span>（別タブで開きます）</span>
+    </a>
+    <ol id="gemini-key-steps">
+      <li>上のリンクを開き、Googleアカウントでログインします。</li>
+      <li>
+        「APIキーを作成」（Create API
+        key）を選びます。すでにキーがある場合は、そのキーを使えます。
+      </li>
+      <li>キーをコピーし、この下の「自分のGemini APIキー」に貼り付けます。</li>
+    </ol>
+    <p className="hint">
+      作成画面やプロジェクトの選択で迷ったら、
+      <a
+        href="https://ai.google.dev/gemini-api/docs/api-key?hl=ja"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        Google公式の取得手順（日本語・別タブ）
+      </a>
+      を確認してください。学校のアカウントでは管理者の許可が必要な場合があります。
+    </p>
+  </section>
+);
 
 export type AutoEditOptions = {
   key: string;
@@ -67,12 +102,14 @@ export function AutoEditPanel({
           <p className="hint">
             ジングルは原稿の指定位置に配置します。音源や原稿の指定がなければ追加しません。OP・EDは「音を整える」で用途を設定してください。
           </p>
+          {apiKeyGuide}
           <div className="auto-key-row">
             <label htmlFor="gemini-key">
               自分のGemini APIキー
               <input
                 id="gemini-key"
                 type="password"
+                aria-describedby="gemini-key-steps gemini-key-safety"
                 value={key}
                 onChange={(e) => {
                   setKey(e.target.value);
@@ -81,7 +118,7 @@ export function AutoEditPanel({
                 autoComplete="off"
                 spellCheck={false}
                 maxLength={512}
-                placeholder="このタブを閉じると消えます"
+                placeholder="取得したAPIキーをここに貼り付ける"
               />
             </label>
             <button
@@ -95,8 +132,8 @@ export function AutoEditPanel({
               キーを消去
             </button>
           </div>
-          <p className="hint">
-            キーは保存・共有せず、このタブのメモリだけで扱います。ブラウザ内では完全に秘匿できません。信頼できる端末で自分のキーを使い、Gemini専用のAPI制限・利用上限を設定してください。
+          <p className="hint" id="gemini-key-safety">
+            キーはチャットやDiscordに貼らないでください。このアプリでは保存・共有せず、タブ内のメモリだけで扱い、処理後またはタブを閉じると消去します。ブラウザ内では完全に秘匿できません。信頼できる端末で自分のキーを使い、Gemini専用のAPI制限・利用上限を設定してください。
           </p>
           <details className="auto-options">
             <summary>処理の設定</summary>
@@ -152,14 +189,6 @@ export function AutoEditPanel({
               無料枠では入力がサービス改善や人による確認に使われる場合があります。個人情報・非公開の会話は無料枠に送らず、契約と出演者の同意を確認してください。
             </p>
             <p>
-              <a
-                href="https://aistudio.google.com/apikey"
-                target="_blank"
-                rel="noreferrer"
-              >
-                キーを取得・管理
-              </a>{" "}
-              ·{" "}
               <a
                 href="https://ai.google.dev/gemini-api/terms"
                 target="_blank"
